@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { AccountingScreen } from "../src/client/screens/AccountingScreen";
+import { AdminScreen } from "../src/client/screens/AdminScreen";
 import { AdmissionScreen } from "../src/client/screens/AdmissionScreen";
 import { HomeScreen } from "../src/client/screens/HomeScreen";
 import { SalesScreen } from "../src/client/screens/SalesScreen";
@@ -91,6 +92,23 @@ describe("会計表示", () => {
 
     expect(firstDay).toHaveTextContent("1枚／100円");
     expect(firstDay).toHaveTextContent("100円");
+  });
+});
+
+describe("管理画面の開催日", () => {
+  it("D1運用回の3日分を具体的な日付で表示する", () => {
+    const data = createInitialData();
+    render(
+      <AdminScreen
+        data={data}
+        mutate={async () => { throw new Error("unexpected mutation"); }}
+        requestConfirmation={() => undefined}
+      />,
+    );
+
+    expect(screen.getByText("2026年9月18日・2026年9月19日・2026年9月20日")).toBeVisible();
+    expect(screen.getByText("開催日 2026年9月18日・2026年9月19日・2026年9月20日。営業状態を確認して運用してください。")).toBeVisible();
+    expect(screen.queryByText(/開催日未設定/)).not.toBeInTheDocument();
   });
 });
 

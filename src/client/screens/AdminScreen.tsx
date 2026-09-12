@@ -16,6 +16,13 @@ export function AdminScreen({ data, mutate, requestConfirmation }: AdminScreenPr
   const workspace = getActiveWorkspace(data);
   const [deviceName, setDeviceName] = useState(data.system.device.name);
   const isDev = data.system.mode === "DEVELOPMENT";
+  const eventDates = ([1, 2, 3] as const).map((day) => workspace.businessDays[day].eventDate);
+  const eventDateLabel = eventDates.every((date): date is string => date !== null)
+    ? eventDates.map((date) => {
+      const [year, month, day] = date.split("-").map(Number);
+      return `${year}年${month}月${day}日`;
+    }).join("・")
+    : "開催日が未設定です";
 
   const confirmAction = (title: string, description: string, action: () => void) => {
     requestConfirmation(title, description, action);
@@ -62,7 +69,7 @@ export function AdminScreen({ data, mutate, requestConfirmation }: AdminScreenPr
     <div className="screen admin-screen">
       <section className="admin-status-grid">
         <article className={isDev ? "admin-status admin-status--dev" : "admin-status admin-status--live"}>
-          <p className="eyebrow">現在の領域</p><h2>{isDev ? "開発者モード" : "本番モード"}</h2><strong>運用回 {workspace.sequence}</strong><p>{isDev ? "終了時にこのテスト業務データを削除します。" : "開催日未設定のため、本番販売は停止条件です。"}</p>
+          <p className="eyebrow">現在の領域</p><h2>{isDev ? "開発者モード" : "本番モード"}</h2><strong>運用回 {workspace.sequence}</strong><p>{isDev ? "終了時にこのテスト業務データを削除します。" : `開催日 ${eventDateLabel}。営業状態を確認して運用してください。`}</p>
         </article>
         <article className={`admin-status ${data.system.maintenance ? "admin-status--stopped" : "admin-status--open"}`}>
           <p className="eyebrow">営業状態</p><h2>{data.system.maintenance ? "営業停止中" : "受付可能"}</h2><p>モード世代 {data.system.modeEpoch}</p><button type="button" className={data.system.maintenance ? "primary-button" : "danger-button"} onClick={toggleMaintenance}>{data.system.maintenance ? "営業を再開" : "営業を停止"}</button>
@@ -96,7 +103,7 @@ export function AdminScreen({ data, mutate, requestConfirmation }: AdminScreenPr
           <div><span>表示番号</span><strong>{workspace.configSnapshot.TICKET_PREFIX}001～{workspace.configSnapshot.TICKET_PREFIX}{String(workspace.configSnapshot.MAX_TICKET_NUMBER).padStart(3, "0")}</strong></div>
           <div><span>単価</span><strong>{workspace.configSnapshot.UNIT_PRICE_YEN}円</strong></div>
           <div><span>日別上限</span><strong>各日 {workspace.configSnapshot.DAILY_TICKET_LIMITS[1]}枚（仮値）</strong></div>
-          <div><span>開催日</span><strong>{Object.values(workspace.configSnapshot.EVENT_DATES).every((date) => date === null) ? "3日とも未設定" : "D1設定済み"}</strong></div>
+          <div><span>開催日</span><strong>{eventDateLabel}</strong></div>
           <div><span>仮確保</span><strong>{workspace.configSnapshot.CHECKOUT_HOLD_SECONDS}秒</strong></div>
           <div><span>最終保存</span><strong>{formatDateTime(data.savedAtMs)}</strong></div>
         </div>
