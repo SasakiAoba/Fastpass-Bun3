@@ -65,11 +65,13 @@ npm run test:d1
 | Root directory | リポジトリルート |
 | D1 Binding | `DB` |
 | Production D1 | `bun2fastpass` |
-| Preview D1 | `bun2fastpass-preview` |
+| Preview D1 | `bun2fastpass`（本番業務開始前の暫定共有） |
 | Runtime Secret | `AUTH_RATE_LIMIT_PEPPER` |
 | Pages Functions failure mode | Fail closed |
 
-ProductionとPreviewは必ず別のD1へBindingします。GitにCloudflare APIトークン、Secret、データベースIDを固定保存しません。
+本番業務データを入れる前の導入試験に限り、ProductionとPreviewは同じD1を暫定共有します。PreviewとProductionの更新試験はDEV領域だけで行い、各試験後にDEV workspaceを削除して、LIVE・営業停止・DEVなしへ戻します。共有中は`system_state`、認証情報、セッション、監査記録を含む全状態が両環境に共通するため、Productionで本番業務を開始した後はPreviewで更新試験を行いません。継続してPreview更新試験が必要になった時点で、Preview専用D1へ分離します。
+
+GitにCloudflare APIトークン、Secret、データベースIDを固定保存しません。
 
 ## D1マイグレーション
 
@@ -84,9 +86,10 @@ Remote適用前には次を必ず行います。
 2. ProductionではTime Travelブックマークを取得する。
 3. `schema_migrations`を確認し、未適用の版だけを適用する。
 4. `PRAGMA foreign_key_check`と`PRAGMA quick_check`を実行する。
-5. Previewで全業務試験とDEV削除を完了する。
-6. ProductionではDEV領域だけで限定試験し、終了時にDEVを削除する。
-7. 最終状態がLIVE・営業停止・DEVなしであることを確認する。
+5. Previewで全業務試験とDEV削除を完了する。共有中はこの間Productionを業務利用しない。
+6. 最終状態がLIVE・営業停止・DEVなしであることを確認してからProductionをデプロイする。
+7. ProductionではDEV領域だけで限定試験し、終了時にDEVを削除する。
+8. Production確認後も、LIVE・営業停止・DEVなしであることを再確認する。
 
 ## 業務上の保証
 
