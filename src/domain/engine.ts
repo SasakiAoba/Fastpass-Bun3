@@ -189,9 +189,7 @@ export function getSummary(data: FastpassData, nowMs = Date.now()): Summary {
   const day = workspace.businessDays[dayNumber];
   const limitsEnforced = workspace.kind === "LIVE";
   const totalActiveHolds = activeHoldQuantity(data, workspace.id, nowMs);
-  const totalTenderedYen = workspaceSales.reduce((sum, sale) => sum + sale.tenderedYen, 0);
-  const totalChangeYen = workspaceSales.reduce((sum, sale) => sum + sale.changeYen, 0);
-  const finalProfitYen = totalTenderedYen - totalChangeYen;
+  const grossSalesYen = workspaceSales.reduce((sum, sale) => sum + sale.totalYen, 0);
   const refundsYen = workspaceRefunds.reduce((sum, refund) => sum + refund.totalYen, 0);
   return {
     dayNumber,
@@ -217,12 +215,12 @@ export function getSummary(data: FastpassData, nowMs = Date.now()): Summary {
       ? Math.max(0, workspace.configSnapshot.MAX_TICKET_NUMBER - workspace.lastTicketNumber)
       : null,
     checkoutCount: workspaceSales.length,
-    totalTenderedYen,
-    totalChangeYen,
-    finalProfitYen,
-    grossSalesYen: workspaceSales.reduce((sum, sale) => sum + sale.totalYen, 0),
+    totalTenderedYen: grossSalesYen,
+    totalChangeYen: 0,
+    finalProfitYen: grossSalesYen,
+    grossSalesYen,
     refundsYen,
-    netSalesYen: finalProfitYen - refundsYen,
+    netSalesYen: grossSalesYen - refundsYen,
     expectedCashYen: data.cashLedger
       .filter((entry) => entry.workspaceId === workspace.id)
       .reduce((sum, entry) => sum + entry.amountYen, 0),
@@ -468,6 +466,23 @@ export function finalizeSale(
     nowMs,
     operationId,
   );
+  return clone(result);
+}
+
+export function sellTickets(
+  data: FastpassData,
+  quantity: number,
+  operationId: string,
+  nowMs = Date.now(),
+): SaleResult {
+  const workspace = getActiveWorkspace(data);
+  const requestHash = hashRequest({ type: "SELL_TICKETS", quantity });
+  const previous = existingOperation<SaleResult>(data, workspace.id, operationId, requestHash);
+  if (previous) return previous;
+  const checkout = createCheckout(data, quantity, `${operationId}:checkout`, nowMs);
+  const totalYen = checkout.quantity * checkout.unitPriceYen;
+  const result = finalizeSale(data, checkout.id, totalYen, `${operationId}:sale`, nowMs + 1);
+  commitOperation(data, workspace.id, operationId, "SELL_TICKETS", requestHash, result, nowMs + 1);
   return clone(result);
 }
 
@@ -955,7 +970,7 @@ function assertNoPendingPhysicalOperations(data: FastpassData, workspaceId: stri
   if (pendingSales || pendingRefunds) {
     throw new FastpassError(
       "PENDING_HANDOVER_EXISTS",
-      "券・釣銭・返金の受渡未確認があります。記録画面で解消してください。",
+      "券または返金の受渡未確認があります。記録画面で解消してください。",
     );
   }
 }

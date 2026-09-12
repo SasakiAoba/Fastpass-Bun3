@@ -45,7 +45,7 @@ export function RecordsScreen({ data, mutate }: RecordsScreenProps) {
   };
 
   const confirmPending = (kind: "SALE" | "REFUND", id: string) => {
-    void mutate("CONFIRM_HANDOVER", { kind, sourceId: id }, kind === "SALE" ? "券・釣銭の受渡しを確認しました。" : "返金の受渡しを確認しました。");
+    void mutate("CONFIRM_HANDOVER", { kind, sourceId: id }, kind === "SALE" ? "券の受渡しを確認しました。" : "返金の受渡しを確認しました。");
   };
 
   const rows = (() => {
@@ -70,7 +70,7 @@ export function RecordsScreen({ data, mutate }: RecordsScreenProps) {
         .map((sale) => (
           <article className="record-card" key={sale.id}>
             <div className="record-card__title"><strong>{formatGroupNumber(sale.groupNumber)}</strong><span className={`status-pill ${sale.handoverConfirmedAtMs ? "status-pill--done" : "status-pill--pending"}`}>{sale.handoverConfirmedAtMs ? "受渡確認済み" : "受渡未確認"}</span></div>
-            <dl><div><dt>購入日時</dt><dd>{formatDateTime(sale.purchasedAtMs)}</dd></div><div><dt>枚数</dt><dd>{sale.quantity}枚</dd></div><div><dt>合計</dt><dd>{formatYen(sale.totalYen)}</dd></div><div><dt>預り／釣銭</dt><dd>{formatYen(sale.tenderedYen)}／{formatYen(sale.changeYen)}</dd></div></dl>
+            <dl><div><dt>購入日時</dt><dd>{formatDateTime(sale.purchasedAtMs)}</dd></div><div><dt>枚数</dt><dd>{sale.quantity}枚</dd></div><div><dt>販売金額</dt><dd>{formatYen(sale.totalYen)}</dd></div></dl>
             <div className="record-number-list">{sale.ticketNumbers.map((number) => <span key={number}>{formatTicketCode(number)}</span>)}</div>
             {!sale.handoverConfirmedAtMs && <button type="button" className="primary-button record-action" onClick={() => confirmPending("SALE", sale.id)}>実物の受渡しを確認</button>}
           </article>

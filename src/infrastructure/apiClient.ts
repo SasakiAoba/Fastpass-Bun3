@@ -27,12 +27,19 @@ function readCookie(name: string): string | null {
   return null;
 }
 
-async function decode<T>(response: Response): Promise<T> {
+async function decode<T>(response: Response, path: string): Promise<T> {
   let value: unknown;
   try {
     value = await response.json();
   } catch {
-    throw new ApiClientError("INVALID_RESPONSE", "サーバーから正しい応答を受け取れませんでした。", undefined, response.status);
+    const contentType = response.headers.get("Content-Type")?.split(";", 1)[0] || "不明";
+    const ray = response.headers.get("CF-Ray");
+    throw new ApiClientError(
+      "INVALID_RESPONSE",
+      "サーバーからJSON形式の応答を受け取れませんでした。再試行しても続く場合は管理者へ連絡してください。",
+      [`接続先: ${path}`, `HTTP状態: ${response.status || "不明"}`, `応答形式: ${contentType}`, ...(ray ? [`CF-Ray: ${ray}`] : [])],
+      response.status,
+    );
   }
   if (!response.ok) {
     const body = value as Partial<ApiErrorBody>;
@@ -53,7 +60,7 @@ async function api<T>(path: string, init?: RequestInit): Promise<T> {
   } catch {
     throw new ApiClientError("NETWORK_ERROR", "サーバーへ接続できません。通信状態を確認してください。");
   }
-  return decode<T>(response);
+  return decode<T>(response, path);
 }
 
 export function getDevice(): { id: string; name: string } {

@@ -19,19 +19,18 @@ describe("NumericKeypad", () => {
     expect(screen.getByRole("button", { name: "検索" })).toBeDisabled();
   });
 
-  it("確定不可でも数字入力とちょうどボタンは使える", () => {
+  it("入場番号では先頭の0を保持できる", () => {
+    const onChange = vi.fn();
     render(
       <NumericKeypad
-        value=""
-        onChange={() => undefined}
+        value="0"
+        onChange={onChange}
         onConfirm={() => undefined}
-        confirmLabel="会計確定・発番"
-        confirmDisabled
-        quickExactValue={300}
+        confirmLabel="番号を一覧へ追加"
+        preserveLeadingZeros
       />,
     );
-    expect(screen.getByRole("button", { name: "1" })).toBeEnabled();
-    expect(screen.getByRole("button", { name: "ちょうど 300円" })).toBeEnabled();
-    expect(screen.getByRole("button", { name: "会計確定・発番" })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "1" }));
+    expect(onChange).toHaveBeenCalledWith("01");
   });
 });

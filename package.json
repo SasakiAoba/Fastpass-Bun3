@@ -13,11 +13,9 @@
     "test": "vitest run --reporter=verbose --pool=threads --maxWorkers=1 --no-file-parallelism",
     "test:watch": "vitest",
     "typecheck": "tsc -p tsconfig.app.json --pretty false && tsc -p tsconfig.functions.json --pretty false",
-    "test:d1": "node scripts/d1-smoke.mjs",
-    "auth:sql": "node scripts/generate-auth-sql.mjs"
+    "test:d1": "node scripts/d1-smoke.mjs"
   },
   "dependencies": {
-    "@noble/hashes": "^2.0.1",
     "react": "^19.1.1",
     "react-dom": "^19.1.1"
   },

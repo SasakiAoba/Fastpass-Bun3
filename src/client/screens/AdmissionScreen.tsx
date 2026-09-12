@@ -189,7 +189,7 @@ export function AdmissionScreen({ data, mutate, requestConfirmation }: Admission
         </section>
         <aside className="side-panel keypad-panel">
           <div className="number-display"><span>番号入力</span><strong>HC-{numericValue || "___"}</strong></div>
-          <NumericKeypad value={numericValue} onChange={setNumericValue} onConfirm={addNumber} confirmLabel="番号を一覧へ追加" maxDigits={8} />
+          <NumericKeypad value={numericValue} onChange={setNumericValue} onConfirm={addNumber} confirmLabel="番号を一覧へ追加" maxDigits={8} preserveLeadingZeros />
         </aside>
       </div>
     </div>

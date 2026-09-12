@@ -1,9 +1,8 @@
-import { argon2idAsync } from "@noble/hashes/argon2.js";
 import { ApiError, assertSameOrigin, constantTimeEqual, isUuid, json, randomToken, readJson, sha256Hex } from "./http";
 
 export interface Env {
   DB: D1Database;
-  AUTH_RATE_LIMIT_PEPPER?: string;
+  AUTH_SHARED_PASSWORD?: string;
 }
 
 export type SessionContext = {
@@ -23,8 +22,7 @@ type LoginBody = {
 const SESSION_COOKIE = "__Host-fastpass_session";
 const CSRF_COOKIE = "__Host-fastpass_csrf";
 const SESSION_MAX_AGE_SECONDS = 34_560_000;
-const LOGIN_WINDOW_MS = 15 * 60 * 1000;
-const MAX_FAILED_LOGINS = 5;
+const PASSWORD_PATTERN = /^(?=.*[A-Z])(?=.*[0-9])[A-Z0-9]{7}$/u;
 
 function parseCookies(request: Request): Map<string, string> {
   const cookies = new Map<string, string>();
@@ -44,54 +42,15 @@ function csrfCookie(value: string, maxAge = SESSION_MAX_AGE_SECONDS): string {
   return `${CSRF_COOKIE}=${encodeURIComponent(value)}; Path=/; Max-Age=${maxAge}; Secure; SameSite=Strict`;
 }
 
-function decodeBase64(value: string): Uint8Array {
-  const padded = value.replaceAll("-", "+").replaceAll("_", "/").padEnd(Math.ceil(value.length / 4) * 4, "=");
-  const binary = atob(padded);
-  return Uint8Array.from(binary, (character) => character.charCodeAt(0));
-}
-
-async function verifyArgon2id(password: string, encoded: string): Promise<boolean> {
-  const fields = encoded.split("$");
-  if (fields.length !== 6 || fields[0] !== "" || fields[1] !== "argon2id" || fields[2] !== "v=19") return false;
-  const parameters = Object.fromEntries(fields[3].split(",").map((part) => part.split("=", 2)));
-  const memory = Number(parameters.m);
-  const iterations = Number(parameters.t);
-  const parallelism = Number(parameters.p);
-  if (!Number.isSafeInteger(memory) || memory < 19_456 || !Number.isSafeInteger(iterations) || iterations < 2 || !Number.isSafeInteger(parallelism) || parallelism < 1) return false;
-  let salt: Uint8Array;
-  let expected: Uint8Array;
-  try {
-    salt = decodeBase64(fields[4]);
-    expected = decodeBase64(fields[5]);
-  } catch {
-    return false;
-  }
-  const actual = await argon2idAsync(new TextEncoder().encode(password), salt, {
-    m: memory,
-    t: iterations,
-    p: parallelism,
-    dkLen: expected.length,
-    maxmem: 64 * 1024 * 1024,
-    asyncTick: 10,
-  });
-  let difference = actual.length ^ expected.length;
-  const length = Math.max(actual.length, expected.length);
-  for (let index = 0; index < length; index += 1) difference |= (actual[index] || 0) ^ (expected[index] || 0);
-  return difference === 0;
-}
-
-async function scopeHash(request: Request, pepper: string): Promise<string> {
-  const ip = request.headers.get("CF-Connecting-IP") || "local";
-  const agent = request.headers.get("User-Agent") || "unknown";
-  const key = await crypto.subtle.importKey(
-    "raw",
-    new TextEncoder().encode(pepper),
-    { name: "HMAC", hash: "SHA-256" },
-    false,
-    ["sign"],
-  );
-  const digest = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(`${ip}\n${agent}`));
-  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+async function verifySharedPassword(candidate: string, expected: string): Promise<boolean> {
+  const encoder = new TextEncoder();
+  const algorithm = { name: "HMAC", hash: "SHA-256" };
+  const [candidateKey, expectedKey] = await Promise.all([
+    crypto.subtle.importKey("raw", encoder.encode(candidate), algorithm, false, ["sign"]),
+    crypto.subtle.importKey("raw", encoder.encode(expected), algorithm, false, ["verify"]),
+  ]);
+  const signature = await crypto.subtle.sign("HMAC", candidateKey, encoder.encode("fastpass-shared-password-v1"));
+  return crypto.subtle.verify("HMAC", expectedKey, signature, encoder.encode("fastpass-shared-password-v1"));
 }
 
 export async function readSession(request: Request, env: Env): Promise<SessionContext | null> {
@@ -145,7 +104,8 @@ export async function authStatus(request: Request, env: Env): Promise<Response> 
     env.DB.prepare("SELECT 1 AS present FROM auth_credentials WHERE singleton_id = 1").first(),
     readSession(request, env),
   ]);
-  return json({ initialized: credential !== null, authenticated: session !== null, serverNowMs: Date.now() });
+  const secretConfigured = typeof env.AUTH_SHARED_PASSWORD === "string" && PASSWORD_PATTERN.test(env.AUTH_SHARED_PASSWORD);
+  return json({ initialized: credential !== null && secretConfigured, authenticated: session !== null && secretConfigured, serverNowMs: Date.now() });
 }
 
 export async function login(request: Request, env: Env): Promise<Response> {
@@ -157,53 +117,35 @@ export async function login(request: Request, env: Env): Promise<Response> {
   if (!isUuid(body.deviceId) || typeof body.deviceName !== "string" || body.deviceName.trim().length < 1 || body.deviceName.trim().length > 100) {
     throw new ApiError(400, "INVALID_DEVICE", "端末情報を確認できません。");
   }
-  if (!env.AUTH_RATE_LIMIT_PEPPER || env.AUTH_RATE_LIMIT_PEPPER.length < 32) {
-    throw new ApiError(503, "SERVER_NOT_CONFIGURED", "認証用Secretが設定されていません。");
+  if (!env.AUTH_SHARED_PASSWORD || !PASSWORD_PATTERN.test(env.AUTH_SHARED_PASSWORD)) {
+    throw new ApiError(503, "SERVER_NOT_CONFIGURED", "共有パスワードSecretが正しく設定されていません。");
   }
   const credential = await env.DB.prepare(
-    "SELECT password_hash, algorithm, memory_kib, iterations, parallelism, auth_generation FROM auth_credentials WHERE singleton_id = 1",
+    "SELECT auth_generation FROM auth_credentials WHERE singleton_id = 1",
   ).first<{
-    password_hash: string;
-    algorithm: string;
-    memory_kib: number;
-    iterations: number;
-    parallelism: number;
     auth_generation: number;
   }>();
-  if (!credential) throw new ApiError(503, "AUTH_NOT_INITIALIZED", "初期パスワードがまだD1へ登録されていません。");
-  if (credential.algorithm !== "argon2id") throw new ApiError(503, "AUTH_CONFIGURATION_INVALID", "認証方式を確認できません。");
+  if (!credential) throw new ApiError(503, "AUTH_NOT_INITIALIZED", "D1の認証世代情報が未登録です。");
 
   const nowMs = Date.now();
-  const scope = await scopeHash(request, env.AUTH_RATE_LIMIT_PEPPER);
-  const failures = await env.DB.prepare(
-    "SELECT COUNT(*) AS count FROM login_attempts WHERE scope_key_hash = ? AND succeeded = 0 AND attempted_at_ms >= ? AND expires_at_ms > ?",
-  ).bind(scope, nowMs - LOGIN_WINDOW_MS, nowMs).first<{ count: number }>();
-  if ((failures?.count || 0) >= MAX_FAILED_LOGINS) {
-    throw new ApiError(429, "LOGIN_RATE_LIMITED", "ログイン試行が多すぎます。15分後にやり直してください。");
-  }
-
   const deviceName = body.deviceName.trim();
-  await env.DB.prepare(
-    `INSERT INTO devices (id, display_name, created_at_ms, last_seen_at_ms, disabled_at_ms)
-     VALUES (?, ?, ?, ?, NULL)
-     ON CONFLICT(id) DO UPDATE SET display_name = excluded.display_name, last_seen_at_ms = excluded.last_seen_at_ms
-     WHERE devices.disabled_at_ms IS NULL`,
-  ).bind(body.deviceId, deviceName, nowMs, nowMs).run();
-
-  const succeeded = await verifyArgon2id(body.password, credential.password_hash);
-  await env.DB.prepare(
-    "INSERT INTO login_attempts (id, scope_key_hash, device_id, succeeded, attempted_at_ms, expires_at_ms) VALUES (?, ?, ?, ?, ?, ?)",
-  ).bind(crypto.randomUUID(), scope, body.deviceId, succeeded ? 1 : 0, nowMs, nowMs + LOGIN_WINDOW_MS).run();
-  if (!succeeded) throw new ApiError(401, "INVALID_CREDENTIALS", "パスワードが正しくありません。");
+  if (!(await verifySharedPassword(body.password, env.AUTH_SHARED_PASSWORD))) {
+    throw new ApiError(401, "INVALID_CREDENTIALS", "パスワードが正しくありません。");
+  }
 
   const sessionToken = randomToken();
   const csrfToken = randomToken();
   const sessionId = crypto.randomUUID();
   await env.DB.batch([
     env.DB.prepare(
+      `INSERT INTO devices (id, display_name, created_at_ms, last_seen_at_ms, disabled_at_ms)
+       VALUES (?, ?, ?, ?, NULL)
+       ON CONFLICT(id) DO UPDATE SET display_name = excluded.display_name, last_seen_at_ms = excluded.last_seen_at_ms
+       WHERE devices.disabled_at_ms IS NULL`,
+    ).bind(body.deviceId, deviceName, nowMs, nowMs),
+    env.DB.prepare(
       "INSERT INTO sessions (id, token_hash, csrf_token_hash, device_id, auth_generation, issued_at_ms, last_used_at_ms, revoked_at_ms) VALUES (?, ?, ?, ?, ?, ?, ?, NULL)",
     ).bind(sessionId, await sha256Hex(sessionToken), await sha256Hex(csrfToken), body.deviceId, credential.auth_generation, nowMs, nowMs),
-    env.DB.prepare("DELETE FROM login_attempts WHERE expires_at_ms <= ?").bind(nowMs),
     env.DB.prepare(
       "INSERT INTO audit_logs (id, workspace_id, device_id, session_id, operation_id, type, status, detail, occurred_at_ms) VALUES (?, NULL, ?, ?, NULL, 'LOGIN_SUCCEEDED', 'SUCCESS', '共有パスワードでログインしました。', ?)",
     ).bind(crypto.randomUUID(), body.deviceId, sessionId, nowMs),

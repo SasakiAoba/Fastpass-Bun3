@@ -11,29 +11,23 @@ type AccountingRow = {
   label: string;
   soldCount: number;
   checkoutCount: number;
-  tenderedYen: number;
-  changeYen: number;
-  finalProfitYen: number;
+  salesYen: number;
   refundedCount: number;
   refundsYen: number;
   afterRefundYen: number;
 };
 
 function calculateRow(label: string, sales: Sale[], refunds: Refund[]): AccountingRow {
-  const tenderedYen = sales.reduce((sum, sale) => sum + sale.tenderedYen, 0);
-  const changeYen = sales.reduce((sum, sale) => sum + sale.changeYen, 0);
-  const finalProfitYen = tenderedYen - changeYen;
+  const salesYen = sales.reduce((sum, sale) => sum + sale.totalYen, 0);
   const refundsYen = refunds.reduce((sum, refund) => sum + refund.totalYen, 0);
   return {
     label,
     soldCount: sales.reduce((sum, sale) => sum + sale.quantity, 0),
     checkoutCount: sales.length,
-    tenderedYen,
-    changeYen,
-    finalProfitYen,
+    salesYen,
     refundedCount: refunds.reduce((sum, refund) => sum + refund.ticketIds.length, 0),
     refundsYen,
-    afterRefundYen: finalProfitYen - refundsYen,
+    afterRefundYen: salesYen - refundsYen,
   };
 }
 
@@ -69,9 +63,8 @@ export function AccountingScreen({ data, summary }: AccountingScreenProps) {
           <p>販売時に記録した金額から自動計算します。</p>
         </div>
         <div className="accounting-totals">
-          <article><span>もらったお金</span><strong>{formatYen(summary.totalTenderedYen)}</strong></article>
-          <article><span>お釣り</span><strong>{formatYen(summary.totalChangeYen)}</strong></article>
-          <article><span>売上金額（払戻前）</span><strong>{formatYen(summary.finalProfitYen)}</strong><small>もらったお金 − お釣り</small></article>
+          <article><span>販売金額</span><strong>{formatYen(summary.grossSalesYen)}</strong><small>販売枚数から自動計算</small></article>
+          <article><span>払い戻し金額</span><strong>{formatYen(summary.refundsYen)}</strong><small>{summary.totalRefunded}枚</small></article>
           <article className="profit"><span>最終金額</span><strong>{formatYen(summary.netSalesYen)}</strong><small>売上金額 − 払い戻し</small></article>
         </div>
       </section>
@@ -89,16 +82,14 @@ export function AccountingScreen({ data, summary }: AccountingScreenProps) {
         </div>
         <div className="data-table day-table">
           <div className="data-table__head">
-            <span>対象</span><span>販売枚数</span><span>会計件数</span><span>もらったお金</span><span>お釣り</span><span>売上金額</span><span>払い戻し</span><span>最終金額</span>
+            <span>対象</span><span>販売枚数</span><span>販売件数</span><span>販売金額</span><span>払い戻し</span><span>最終金額</span>
           </div>
           {[...dayRows, overall].map((row) => (
             <div className={`data-table__row ${row.label === "全期間" ? "total-row" : ""}`} key={row.label}>
               <strong>{row.label}</strong>
               <span>{row.soldCount}枚</span>
               <span>{row.checkoutCount}件</span>
-              <span>{formatYen(row.tenderedYen)}</span>
-              <span>{formatYen(row.changeYen)}</span>
-              <strong>{formatYen(row.finalProfitYen)}</strong>
+              <strong>{formatYen(row.salesYen)}</strong>
               <span>{row.refundedCount}枚／{formatYen(row.refundsYen)}</span>
               <strong>{formatYen(row.afterRefundYen)}</strong>
             </div>
@@ -107,9 +98,9 @@ export function AccountingScreen({ data, summary }: AccountingScreenProps) {
       </section>
 
       <section className="accounting-note" aria-label="計算方法">
-        <div><strong>売上金額（払戻前）</strong><span>もらったお金 − お釣り</span></div>
-        <div><strong>最終金額</strong><span>売上金額 − 払い戻し金額</span></div>
-        <p>経費、釣銭準備金、現金補充、売上金回収、現金実査はこの画面では扱いません。</p>
+        <div><strong>販売金額</strong><span>販売枚数 × 1枚の単価</span></div>
+        <div><strong>最終金額</strong><span>販売金額 − 払い戻し金額</span></div>
+        <p>経費、現金補充、売上金回収、現金実査はこの画面では扱いません。</p>
       </section>
     </div>
   );

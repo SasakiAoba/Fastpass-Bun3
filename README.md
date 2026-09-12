@@ -9,31 +9,24 @@ Cloudflare Pages FunctionsとD1を使い、木製ファストパスの販売、�
 - 単価：100円
 - 番号：`HC-001`～`HC-200`
 - 日別上限：各日200枚の仮値
-- 開催日：3日とも未設定
-- 仮確保：180秒
+- 開催日：2026年9月18日・19日・20日
 - 時刻基準：サーバー時刻（Asia/Tokyo）
 
-開催日未設定中、LIVEの販売は停止します。画面・業務試験は管理画面から開発者モードを開始して行います。
+LIVEの販売は設定した開催日だけ受け付けます。画面・業務試験は管理画面から開発者モードを開始して行います。
 
 ## 認証
 
 個別アカウントや2FAは設けず、1つの共有パスワードをサーバーで検証します。
 
-- 平文パスワードはコード、Git、D1へ保存しません。
-- D1にはArgon2idの検証値だけを保存します。
+- 7文字の英大文字・数字による共有パスワードはCloudflareの`AUTH_SHARED_PASSWORD` Secretだけへ保存し、コード、Git、D1へ保存しません。
+- D1の既存認証行はセッションを一括失効できる認証世代番号だけに利用します。
 - ログイン成功後はSecure・HttpOnly・SameSite=StrictのセッションCookieを使用します。
 - 状態変更は同一OriginとCSRFトークンを検証します。
-- ログイン失敗はIP・ブラウザー単位の匿名化キーで回数制限します。
+- ログイン試行の15分制限は設けず、誤入力後もすぐ再試行できます。
 - 通常操作、払い戻し、管理操作でパスワードを再入力しません。
 - 共有端末を離れるときは明示的にログアウトします。
 
-初期認証SQLは、パスワードを標準入力で渡して生成します。生成結果は一時ファイルだけに保存し、適用後に削除してください。
-
-```bash
-npm run auth:sql > auth-initial.sql
-```
-
-`auth-*.sql`、`.dev.vars`、`wrangler.jsonc`はGit対象外です。
+`.dev.vars`と`wrangler.jsonc`はGit対象外です。
 
 ## 開発と検査
 
@@ -66,7 +59,7 @@ npm run test:d1
 | D1 Binding | `DB` |
 | Production D1 | `bun2fastpass` |
 | Preview D1 | `bun2fastpass`（本番業務開始前の暫定共有） |
-| Runtime Secret | `AUTH_RATE_LIMIT_PEPPER` |
+| Runtime Secret | `AUTH_SHARED_PASSWORD`（英大文字・数字7文字） |
 | Pages Functions failure mode | Fail closed |
 
 `src/config/fastpass.config.ts`の`AUTO_START_DEVELOPER_MODE`は、ログイン後の自動DEV開始を制御します。導入試験中は`true`、本番移行時は`false`へ変更して先にデプロイし、その後で管理画面から既存DEV領域を終了します。`false`にしても手動の開発者モードは利用できます。
@@ -104,7 +97,8 @@ Remote適用前には次を必ず行います。
 - DEVはLIVEと別workspaceに保存し、終了時にDEV workspaceをCASCADE削除します。
 - DEV終了後はLIVE・営業停止へ戻します。
 - 払い戻しても販売済み枚数と発行番号は戻しません。
-- 会計の最終金額は「預り金合計 − お釣り合計 − 払い戻し合計」です。
+- 販売は人数確定と同時に発番し、預り金・お釣りの入力は行いません。
+- 会計の最終金額は「販売金額 − 払い戻し合計」です。
 - 正式なJSON/CSV出力はLIVEだけを対象にし、認証情報やセッションを含めません。
 
 ## 秘密情報とGit

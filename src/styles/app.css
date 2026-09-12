@@ -1216,7 +1216,7 @@ h3 {
 }
 
 .day-table .data-table__head,
-.day-table .data-table__row { grid-template-columns: .72fr .68fr .65fr .95fr .85fr .9fr 1.12fr .95fr; }
+.day-table .data-table__row { grid-template-columns: .72fr .75fr .75fr 1fr 1.2fr 1fr; }
 .data-table__head { color: var(--muted); background: #eef4f7; font-size: .72rem; font-weight: 800; }
 .data-table__row { border-top: 1px solid var(--line); font-size: .8rem; }
 .day-table .total-row { color: var(--navy-900); background: #f1f7fa; }

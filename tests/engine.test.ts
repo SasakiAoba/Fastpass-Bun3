@@ -5,11 +5,11 @@ import {
   createCheckout,
   disableDeveloperMode,
   enableDeveloperMode,
-  finalizeSale,
   getActiveWorkspace,
   getSummary,
   refundTickets,
   reverseCheckin,
+  sellTickets,
 } from "../src/domain/engine";
 import { FastpassError } from "../src/domain/errors";
 import { createInitialData } from "../src/domain/initialState";
@@ -23,12 +23,11 @@ function createDevelopmentData(nowMs = Date.parse("2026-09-10T09:00:00+09:00")) 
 function sell(
   data: ReturnType<typeof createInitialData>,
   quantity: number,
-  tenderedYen: number,
+  _tenderedYen: number,
   id: string,
   nowMs = Date.parse("2026-09-10T09:01:00+09:00"),
 ) {
-  const checkout = createCheckout(data, quantity, `${id}-hold`, nowMs);
-  return finalizeSale(data, checkout.id, tenderedYen, `${id}-sale`, nowMs + 1_000);
+  return sellTickets(data, quantity, id, nowMs);
 }
 
 describe("販売と発番", () => {
@@ -59,13 +58,14 @@ describe("販売と発番", () => {
     );
   });
 
-  it("DEVでは001から連続発番し、会計・釣銭・グループを記録する", () => {
+  it("DEVでは001から連続発番し、販売金額・グループを記録する", () => {
     const data = createDevelopmentData();
     const result = sell(data, 3, 1_000, "first");
     expect(result.ticketNumbers).toEqual([1, 2, 3]);
     expect(result.groupNumber).toBe(1);
     expect(result.totalYen).toBe(300);
-    expect(result.changeYen).toBe(700);
+    expect(result.changeYen).toBe(0);
+    expect(result.tenderedYen).toBe(300);
     expect(data.tickets).toHaveLength(3);
     expect(data.cashLedger).toHaveLength(1);
     expect(data.cashLedger[0].amountYen).toBe(300);
@@ -73,9 +73,8 @@ describe("販売と発番", () => {
 
   it("同じ販売操作IDの再送は同じ結果を返し、二重発番しない", () => {
     const data = createDevelopmentData();
-    const checkout = createCheckout(data, 2, "hold-once");
-    const first = finalizeSale(data, checkout.id, 500, "sale-once");
-    const second = finalizeSale(data, checkout.id, 500, "sale-once");
+    const first = sellTickets(data, 2, "sale-once");
+    const second = sellTickets(data, 2, "sale-once");
     expect(second).toEqual(first);
     expect(data.sales).toHaveLength(1);
     expect(data.tickets).toHaveLength(2);
@@ -164,13 +163,13 @@ describe("LIVEとDEVの分離", () => {
     expect(summary.availableToday).toBeNull();
     expect(summary.totalSold).toBe(4);
     expect(summary.checkoutCount).toBe(1);
-    expect(summary.totalTenderedYen).toBe(500);
-    expect(summary.totalChangeYen).toBe(100);
+    expect(summary.totalTenderedYen).toBe(400);
+    expect(summary.totalChangeYen).toBe(0);
     expect(summary.finalProfitYen).toBe(400);
     expect(summary.netSalesYen).toBe(400);
   });
 
-  it("預り金、お釣り、払戻前売上、払い戻し控除後の最終金額を販売記録から集計する", () => {
+  it("販売金額、払い戻し、最終金額を販売記録から集計する", () => {
     const data = createDevelopmentData();
     const first = sell(data, 2, 500, "accounting-first");
     confirmHandover(data, "SALE", first.saleId, "accounting-first-handover");
@@ -180,8 +179,8 @@ describe("LIVEとDEVの分離", () => {
     const summary = getSummary(data);
     expect(summary.totalSold).toBe(3);
     expect(summary.checkoutCount).toBe(2);
-    expect(summary.totalTenderedYen).toBe(700);
-    expect(summary.totalChangeYen).toBe(400);
+    expect(summary.totalTenderedYen).toBe(300);
+    expect(summary.totalChangeYen).toBe(0);
     expect(summary.finalProfitYen).toBe(300);
     expect(summary.refundsYen).toBe(100);
     expect(summary.netSalesYen).toBe(200);

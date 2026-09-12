@@ -68,7 +68,7 @@ export function ticketsCsv(data: FastpassData, workspaceId: string): string {
 
 export function salesCsv(data: FastpassData, workspaceId: string): string {
   return csv(
-    ["販売ID", "グループ", "販売日", "枚数", "単価", "合計", "預り金", "釣銭", "購入日時ms", "番号", "受渡確認日時ms"],
+    ["販売ID", "グループ", "販売日", "枚数", "単価", "販売金額", "購入日時ms", "番号", "受渡確認日時ms"],
     data.sales
       .filter((sale) => sale.workspaceId === workspaceId)
       .map((sale) => [
@@ -78,8 +78,6 @@ export function salesCsv(data: FastpassData, workspaceId: string): string {
         sale.quantity,
         sale.unitPriceYen,
         sale.totalYen,
-        sale.tenderedYen,
-        sale.changeYen,
         sale.purchasedAtMs,
         sale.ticketNumbers.map(formatTicketCode).join(" "),
         sale.handoverConfirmedAtMs,

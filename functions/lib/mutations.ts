@@ -165,6 +165,70 @@ async function cancelCheckout(db: D1Database, session: SessionContext, context: 
   return result;
 }
 
+async function sellTickets(db: D1Database, session: SessionContext, context: ActiveContext, request: MutationRequest, hash: string, nowMs: number) {
+  ensureCurrent(context, request);
+  const quantity = requireInteger(request.payload.quantity, "人数", 1, context.maxItemsPerOperation);
+  const dayNumber = await resolveDay(db, context, nowMs);
+  const checkoutId = crypto.randomUUID();
+  const saleId = crypto.randomUUID();
+  const totalYen = quantity * context.unitPriceYen;
+  const expiresAtMs = nowMs + 1_000;
+  const itemJson = JSON.stringify(Array.from({ length: quantity }, (_, index) => ({
+    index, ticketId: crypto.randomUUID(), eventId: crypto.randomUUID(),
+  })));
+  const initialResult = {
+    saleId, checkoutId, groupNumber: 0, ticketNumbers: [] as number[], totalYen,
+    tenderedYen: totalYen, changeYen: 0, purchasedAtMs: nowMs,
+  };
+  await db.batch([
+    db.prepare(`INSERT INTO checkouts (workspace_id, id, request_id, day_number, quantity, unit_price_yen, status, created_at_ms, expires_at_ms, device_id)
+      SELECT ?, ?, ?, ?, ?, w.unit_price_yen, 'COMPLETED', ?, ?, ? FROM workspaces AS w
+      JOIN system_state AS s ON s.singleton_id = 1
+      JOIN business_days AS d ON d.workspace_id = w.id AND d.day_number = ?
+      WHERE w.id = ? AND w.status = 'ACTIVE' AND s.mode = ? AND s.mode_epoch = ? AND s.maintenance = 0
+        AND (w.kind = 'DEV' OR (
+          d.sold_count + ? + COALESCE((SELECT SUM(quantity) FROM checkouts WHERE workspace_id = w.id AND day_number = d.day_number AND status = 'HELD' AND expires_at_ms > ?), 0) <= d.ticket_limit
+          AND w.last_ticket_number + ? + COALESCE((SELECT SUM(quantity) FROM checkouts WHERE workspace_id = w.id AND status = 'HELD' AND expires_at_ms > ?), 0) <= w.max_ticket_number
+        ))`).bind(
+          context.workspaceId, checkoutId, request.requestId, dayNumber, quantity, nowMs, expiresAtMs, session.deviceId,
+          dayNumber, context.workspaceId, activeMode(context), request.modeEpoch, quantity, nowMs, quantity, nowMs,
+        ),
+    assertion(db, context, request.requestId, "direct-checkout-created", 1, nowMs),
+    db.prepare(`UPDATE workspaces SET last_ticket_number = last_ticket_number + ?, last_group_number = last_group_number + 1
+      WHERE id = ? AND status = 'ACTIVE' AND (kind = 'DEV' OR last_ticket_number + ? <= max_ticket_number)`).bind(
+      quantity, context.workspaceId, quantity,
+    ),
+    assertion(db, context, request.requestId, "direct-numbers-allocated", 1, nowMs),
+    db.prepare(`UPDATE business_days SET sold_count = sold_count + ? WHERE workspace_id = ? AND day_number = ?
+      AND (? = 'DEV' OR sold_count + ? <= ticket_limit)`).bind(quantity, context.workspaceId, dayNumber, context.kind, quantity),
+    assertion(db, context, request.requestId, "direct-daily-count-updated", 1, nowMs),
+    db.prepare(`INSERT INTO sales (workspace_id, id, checkout_id, group_number, day_number, quantity, unit_price_yen, total_yen, tendered_yen, change_yen, purchased_at_ms, device_id, handover_confirmed_at_ms)
+      SELECT ?, ?, ?, last_group_number, ?, ?, ?, ?, ?, 0, ?, ?, NULL FROM workspaces WHERE id = ?`).bind(
+      context.workspaceId, saleId, checkoutId, dayNumber, quantity, context.unitPriceYen,
+      totalYen, totalYen, nowMs, session.deviceId, context.workspaceId,
+    ),
+    db.prepare(`INSERT INTO tickets (workspace_id, id, serial_number, sale_id, status, used_at_ms, current_use_event_id, refunded_at_ms, version)
+      SELECT ?, json_extract(j.value, '$.ticketId'), w.last_ticket_number - ? + CAST(j.key AS INTEGER) + 1, ?, 'ISSUED', NULL, NULL, NULL, 0
+      FROM json_each(?) AS j JOIN workspaces AS w ON w.id = ?`).bind(context.workspaceId, quantity, saleId, itemJson, context.workspaceId),
+    db.prepare(`INSERT INTO ticket_events (workspace_id, id, ticket_id, type, from_status, to_status, occurred_at_ms, device_id, operation_id, reason, reversed_event_id)
+      SELECT ?, json_extract(value, '$.eventId'), json_extract(value, '$.ticketId'), 'SALE', 'UNISSUED', 'ISSUED', ?, ?, ?, NULL, NULL FROM json_each(?)`).bind(
+      context.workspaceId, nowMs, session.deviceId, request.requestId, itemJson,
+    ),
+    db.prepare(`INSERT INTO business_operations (workspace_id, request_id, type, request_hash, result_json, committed_at_ms)
+      SELECT ?, ?, ?, ?, json_object(
+        'saleId', ?, 'checkoutId', ?, 'groupNumber', s.group_number,
+        'ticketNumbers', json((SELECT json_group_array(serial_number) FROM (SELECT serial_number FROM tickets WHERE workspace_id = ? AND sale_id = ? ORDER BY serial_number))),
+        'totalYen', ?, 'tenderedYen', ?, 'changeYen', 0, 'purchasedAtMs', ?), ?
+      FROM sales AS s WHERE s.workspace_id = ? AND s.id = ?`).bind(
+      context.workspaceId, request.requestId, request.action, hash, saleId, checkoutId, context.workspaceId, saleId,
+      totalYen, totalYen, nowMs, nowMs, context.workspaceId, saleId,
+    ),
+    audit(db, session, context.workspaceId, request.requestId, "SALE_COMMITTED", `${quantity}枚を販売し発番しました。`, nowMs),
+  ]);
+  const saved = await existing(db, request.requestId, hash);
+  return saved || initialResult;
+}
+
 async function finalizeSale(db: D1Database, session: SessionContext, context: ActiveContext, request: MutationRequest, hash: string, nowMs: number) {
   ensureCurrent(context, request);
   const checkoutId = requireText(request.payload.checkoutId, "一時確保ID", 100);
@@ -505,6 +569,7 @@ export async function mutate(db: D1Database, session: SessionContext, request: M
   const nowMs = Date.now();
   try {
     switch (request.action) {
+      case "SELL_TICKETS": return await sellTickets(db, session, context, request, hash, nowMs);
       case "CREATE_CHECKOUT": return await createCheckout(db, session, context, request, hash, nowMs);
       case "CANCEL_CHECKOUT": return await cancelCheckout(db, session, context, request, hash, nowMs);
       case "FINALIZE_SALE": return await finalizeSale(db, session, context, request, hash, nowMs);

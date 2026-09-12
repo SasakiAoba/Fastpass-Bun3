@@ -2,6 +2,7 @@ import type { DayNumber } from "../config/fastpass.config";
 import type { FastpassData } from "../domain/types";
 
 export type MutationAction =
+  | "SELL_TICKETS"
   | "CREATE_CHECKOUT"
   | "CANCEL_CHECKOUT"
   | "FINALIZE_SALE"

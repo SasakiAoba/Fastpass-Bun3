@@ -54,9 +54,9 @@ async function exportResponse(request: Request, env: Env, kind: string): Promise
     extension = "csv";
     contentType = "text/csv; charset=utf-8";
   } else if (kind === "sales") {
-    body = csv(["販売ID", "グループ", "販売日", "枚数", "単価", "合計", "預り金", "釣銭", "購入日時ms", "番号", "受渡確認日時ms"], data.sales.map((sale) => [
+    body = csv(["販売ID", "グループ", "販売日", "枚数", "単価", "販売金額", "購入日時ms", "番号", "受渡確認日時ms"], data.sales.map((sale) => [
       sale.id, `G-${String(sale.groupNumber).padStart(4, "0")}`, sale.dayNumber, sale.quantity, sale.unitPriceYen,
-      sale.totalYen, sale.tenderedYen, sale.changeYen, sale.purchasedAtMs,
+      sale.totalYen, sale.purchasedAtMs,
       sale.ticketNumbers.map((number) => `HC-${String(number).padStart(3, "0")}`).join(" "), sale.handoverConfirmedAtMs,
     ]));
     extension = "csv";

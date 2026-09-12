@@ -41,6 +41,7 @@ export default function App() {
   const [authenticated, setAuthenticated] = useState(false);
   const [initialized, setInitialized] = useState(true);
   const [booting, setBooting] = useState(true);
+  const [dataLoadError, setDataLoadError] = useState<string | null>(null);
   const [serverOffsetMs, setServerOffsetMs] = useState(0);
   const [mutating, setMutating] = useState(false);
   const mutatingRef = useRef(false);
@@ -78,6 +79,7 @@ export default function App() {
   const loadAuthenticatedState = useCallback(async () => {
     const startup = await loadStartupState(client.current);
     applyState(startup.state);
+    setDataLoadError(null);
     if (startup.autoStartError) showError(startup.autoStartError);
     return startup.autoStartError;
   }, [applyState, showError]);
@@ -91,7 +93,17 @@ export default function App() {
         setInitialized(status.initialized);
         setAuthenticated(status.authenticated);
         setServerOffsetMs(status.serverNowMs - Date.now());
-        if (status.authenticated) await loadAuthenticatedState();
+        if (status.authenticated) {
+          try {
+            await loadAuthenticatedState();
+          } catch (error) {
+            if (error instanceof ApiClientError && error.status === 401) {
+              showError(error);
+            } else {
+              setDataLoadError(error instanceof Error ? error.message : "データを読み込めませんでした。");
+            }
+          }
+        }
       } catch (error) {
         if (active) showError(error);
       } finally {
@@ -151,40 +163,71 @@ export default function App() {
   };
 
   const login = useCallback(async (password: string) => {
+    let status;
     try {
-      const status = await client.current.login(password);
-      setAuthenticated(status.authenticated);
-      setInitialized(status.initialized);
+      status = await client.current.login(password);
+    } catch (error) {
+      throw new Error(error instanceof ApiClientError ? error.message : "ログインできませんでした。");
+    }
+    setAuthenticated(status.authenticated);
+    setInitialized(status.initialized);
+    setDataLoadError(null);
+    try {
       const autoStartError = await loadAuthenticatedState();
       if (!autoStartError) setNotice({ kind: "success", message: "ログインしました。" });
     } catch (error) {
-      throw new Error(error instanceof ApiClientError ? error.message : "ログインできませんでした。");
+      setDataLoadError(error instanceof Error ? error.message : "ログイン後のデータを読み込めませんでした。");
     }
   }, [loadAuthenticatedState]);
 
   const logout = useCallback(async () => {
     try {
       await client.current.logout();
-    } catch (error) {
-      showError(error);
-    } finally {
       setAuthenticated(false);
       setData(null);
+      setDataLoadError(null);
       setScreen("home");
       setConfirmation(null);
+    } catch (error) {
+      showError(error);
     }
   }, [showError]);
+
+  const retryDataLoad = useCallback(async () => {
+    setDataLoadError(null);
+    try {
+      await loadAuthenticatedState();
+    } catch (error) {
+      if (error instanceof ApiClientError && error.status === 401) showError(error);
+      else setDataLoadError(error instanceof Error ? error.message : "データを読み込めませんでした。");
+    }
+  }, [loadAuthenticatedState, showError]);
 
   if (booting) {
     return <main className="auth-shell"><section className="auth-card"><h1>接続を確認しています…</h1></section></main>;
   }
 
-  if (!authenticated || !data) {
+  if (!authenticated) {
     return (
       <>
         {notice && <NoticeBanner notice={notice} onClose={() => setNotice(null)} />}
         <AuthScreen initialized={initialized} onLogin={login} />
       </>
+    );
+  }
+
+  if (!data) {
+    return (
+      <main className="auth-shell">
+        {notice && <NoticeBanner notice={notice} onClose={() => setNotice(null)} />}
+        <section className="auth-card" aria-live="polite">
+          <p className="eyebrow">ログイン済み</p>
+          <h1>運用データを読み込めません</h1>
+          <p>{dataLoadError || "サーバーのデータ取得に失敗しました。"}</p>
+          <button type="button" className="primary-button" onClick={() => void retryDataLoad()}>もう一度読み込む</button>
+          <button type="button" className="secondary-button" onClick={() => void logout()}>ログアウト</button>
+        </section>
+      </main>
     );
   }
 
@@ -222,7 +265,7 @@ export default function App() {
         {screen === "home" && <HomeScreen summary={summary} workspace={workspace} onNavigate={setScreen} />}
         {screen === "sales" && (data.system.maintenance
           ? <MaintenanceScreen />
-          : <SalesScreen data={data} summary={summary} nowMs={nowMs} mutate={mutate} requestConfirmation={requestConfirmation} />)}
+          : <SalesScreen data={data} summary={summary} mutate={mutate} requestConfirmation={requestConfirmation} />)}
         {screen === "admission" && (data.system.maintenance
           ? <MaintenanceScreen />
           : <AdmissionScreen data={data} mutate={mutate} requestConfirmation={requestConfirmation} />)}

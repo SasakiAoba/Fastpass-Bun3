@@ -9,12 +9,11 @@ import type { Mutate, RequestConfirmation } from "../src/client/uiTypes";
 import {
   confirmHandover,
   checkInTickets,
-  createCheckout,
   enableDeveloperMode,
-  finalizeSale,
   getActiveWorkspace,
   getSummary,
   refundTickets,
+  sellTickets,
 } from "../src/domain/engine";
 import { createInitialData } from "../src/domain/initialState";
 
@@ -27,17 +26,15 @@ function createDevelopmentData() {
 function sell(
   data: ReturnType<typeof createInitialData>,
   quantity: number,
-  tenderedYen: number,
+  _tenderedYen: number,
   id: string,
 ) {
-  const checkout = createCheckout(data, quantity, `${id}-hold`);
-  return finalizeSale(data, checkout.id, tenderedYen, `${id}-sale`);
+  return sellTickets(data, quantity, id);
 }
 
 function directMutate(data: ReturnType<typeof createInitialData>): Mutate {
   return async (action, payload) => {
-    if (action === "CREATE_CHECKOUT") return createCheckout(data, payload.quantity!, crypto.randomUUID()) as never;
-    if (action === "FINALIZE_SALE") return finalizeSale(data, payload.checkoutId!, payload.tenderedYen!, crypto.randomUUID()) as never;
+    if (action === "SELL_TICKETS") return sellTickets(data, payload.quantity!, crypto.randomUUID()) as never;
     if (action === "CONFIRM_HANDOVER") return confirmHandover(data, payload.kind!, payload.sourceId!, crypto.randomUUID()) as never;
     if (action === "HANDOVER_AND_CHECKIN") {
       const sale = data.sales.find((candidate) => candidate.id === payload.saleId)!;
@@ -58,7 +55,7 @@ describe("会計表示", () => {
 
     const { container, unmount } = render(<AccountingScreen data={data} summary={summary} />);
     const totalCards = [...container.querySelectorAll<HTMLElement>(".accounting-totals article")];
-    const preRefund = totalCards.find((card) => card.textContent?.includes("売上金額（払戻前）"));
+    const preRefund = totalCards.find((card) => card.textContent?.includes("販売金額"));
     const finalAmount = totalCards.find((card) => card.textContent?.includes("最終金額"));
 
     expect(preRefund).toHaveTextContent("200円");
@@ -76,7 +73,7 @@ describe("会計表示", () => {
     );
     const homeFinalAmount = screen.getByText("最終金額").closest("article");
     expect(homeFinalAmount).toHaveTextContent("100円");
-    expect(homeFinalAmount).toHaveTextContent("払戻前 200円");
+    expect(homeFinalAmount).toHaveTextContent("販売金額 200円から控除");
   });
 
   it("D1形式で現金台帳が空でも販売日へ払い戻しを反映する", () => {
@@ -121,7 +118,6 @@ describe("販売直後の入場使用", () => {
       <SalesScreen
         data={data}
         summary={getSummary(data)}
-        nowMs={Date.now()}
         mutate={directMutate(data)}
         requestConfirmation={requestConfirmation}
       />,
@@ -129,13 +125,11 @@ describe("販売直後の入場使用", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "2" }));
     fireEvent.click(screen.getByRole("button", { name: "人数をカートへ追加" }));
-    fireEvent.click(screen.getByRole("button", { name: "会計へ進む・2枚を確保" }));
-    await screen.findByRole("button", { name: "ちょうど 200円" });
-    fireEvent.click(screen.getByRole("button", { name: "ちょうど 200円" }));
-    fireEvent.click(screen.getByRole("button", { name: "会計確定・発番" }));
+    fireEvent.click(screen.getByRole("button", { name: "販売確定・2枚を発番" }));
 
-    expect(await screen.findByRole("button", { name: "このまま入場使用（2枚）" })).toBeEnabled();
-    fireEvent.click(screen.getByRole("button", { name: "このまま入場使用（2枚）" }));
+    expect(await screen.findByRole("button", { name: "購入した方がこのまま入場する（2枚）" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "券を渡して列に並んでもらう" })).toBeEnabled();
+    fireEvent.click(screen.getByRole("button", { name: "購入した方がこのまま入場する（2枚）" }));
 
     await waitFor(() => expect(data.sales[0].handoverConfirmedAtMs).not.toBeNull());
     expect(data.tickets.map((ticket) => ticket.status)).toEqual(["USED", "USED"]);
@@ -147,6 +141,19 @@ describe("販売直後の入場使用", () => {
 });
 
 describe("入場画面の一覧", () => {
+  it.each(["1", "01", "001"])("%sをHC-001として受け付ける", (input) => {
+    const data = createDevelopmentData();
+    sell(data, 1, 100, `leading-${input}`);
+    const { unmount } = render(
+      <AdmissionScreen data={data} mutate={directMutate(data)} requestConfirmation={() => undefined} />,
+    );
+    const keypad = screen.getByLabelText("数字入力キーパッド");
+    for (const digit of input) fireEvent.click(within(keypad).getByRole("button", { name: digit }));
+    fireEvent.click(within(keypad).getByRole("button", { name: "番号を一覧へ追加" }));
+    expect(screen.getByText("HC-001")).toBeVisible();
+    unmount();
+  });
+
   it("5枚以上でも一覧枠と確定ボタンを分離する", () => {
     const data = createDevelopmentData();
     sell(data, 6, 600, "admission-scroll");
