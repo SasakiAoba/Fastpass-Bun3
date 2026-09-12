@@ -12,6 +12,7 @@ import type { Mutate, RequestConfirmation, ScreenName } from "./client/uiTypes";
 import { getActiveWorkspace, getSummary } from "./domain/engine";
 import type { FastpassData } from "./domain/types";
 import { ApiClient, ApiClientError, rememberDeviceName } from "./infrastructure/apiClient";
+import { loadStartupState } from "./infrastructure/startup";
 
 type Notice = {
   kind: "success" | "error" | "warning";
@@ -74,6 +75,13 @@ export default function App() {
     });
   }, []);
 
+  const loadAuthenticatedState = useCallback(async () => {
+    const startup = await loadStartupState(client.current);
+    applyState(startup.state);
+    if (startup.autoStartError) showError(startup.autoStartError);
+    return startup.autoStartError;
+  }, [applyState, showError]);
+
   useEffect(() => {
     let active = true;
     void (async () => {
@@ -83,7 +91,7 @@ export default function App() {
         setInitialized(status.initialized);
         setAuthenticated(status.authenticated);
         setServerOffsetMs(status.serverNowMs - Date.now());
-        if (status.authenticated) applyState(await client.current.state());
+        if (status.authenticated) await loadAuthenticatedState();
       } catch (error) {
         if (active) showError(error);
       } finally {
@@ -91,7 +99,7 @@ export default function App() {
       }
     })();
     return () => { active = false; };
-  }, [applyState, showError]);
+  }, [loadAuthenticatedState, showError]);
 
   useEffect(() => {
     if (!authenticated || !data || mutating) return;
@@ -147,12 +155,12 @@ export default function App() {
       const status = await client.current.login(password);
       setAuthenticated(status.authenticated);
       setInitialized(status.initialized);
-      applyState(await client.current.state());
-      setNotice({ kind: "success", message: "ログインしました。" });
+      const autoStartError = await loadAuthenticatedState();
+      if (!autoStartError) setNotice({ kind: "success", message: "ログインしました。" });
     } catch (error) {
       throw new Error(error instanceof ApiClientError ? error.message : "ログインできませんでした。");
     }
-  }, [applyState]);
+  }, [loadAuthenticatedState]);
 
   const logout = useCallback(async () => {
     try {

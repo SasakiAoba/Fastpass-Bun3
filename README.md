@@ -69,6 +69,10 @@ npm run test:d1
 | Runtime Secret | `AUTH_RATE_LIMIT_PEPPER` |
 | Pages Functions failure mode | Fail closed |
 
+`src/config/fastpass.config.ts`の`AUTO_START_DEVELOPER_MODE`は、ログイン後の自動DEV開始を制御します。導入試験中は`true`、本番移行時は`false`へ変更して先にデプロイし、その後で管理画面から既存DEV領域を終了します。`false`にしても手動の開発者モードは利用できます。
+
+開催日は日本時間で、1日目`2026-09-18`、2日目`2026-09-19`、3日目`2026-09-20`です。LIVE販売はこの3日だけを受け付け、営業停止中は開催日でも業務更新を拒否します。
+
 本番業務データを入れる前の導入試験に限り、ProductionとPreviewは同じD1を暫定共有します。PreviewとProductionの更新試験はDEV領域だけで行い、各試験後にDEV workspaceを削除して、LIVE・営業停止・DEVなしへ戻します。共有中は`system_state`、認証情報、セッション、監査記録を含む全状態が両環境に共通するため、Productionで本番業務を開始した後はPreviewで更新試験を行いません。継続してPreview更新試験が必要になった時点で、Preview専用D1へ分離します。
 
 GitにCloudflare APIトークン、Secret、データベースIDを固定保存しません。
@@ -77,8 +81,9 @@ GitにCloudflare APIトークン、Secret、データベースIDを固定保存�
 
 - `migrations/0001_initial.sql`: Productionに適用済みの基準スキーマと空のLIVE運用回1
 - `migrations/0002_atomic_operations.sql`: 条件付き更新件数を同一batch内で検証し、競合時に全体をロールバックする仕組み
+- `migrations/0003_event_dates.sql`: LIVE運用回1の開催日を2026年9月18日～20日に設定
 
-`0001`は新規データベースだけに適用します。既存Productionには`0002`だけを適用します。認証行はマイグレーションに含めません。
+`0001`は新規データベースだけに適用します。既存Productionには未適用の`0002`以降だけを順番に適用します。認証行はマイグレーションに含めません。
 
 Remote適用前には次を必ず行います。
 

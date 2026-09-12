@@ -16,6 +16,9 @@ export type FastpassConfig = {
   ALLOW_DEVELOPER_MODE: boolean;
 };
 
+// 本番移行時は false に変更してデプロイした後、既存DEV領域を管理画面から終了する。
+export const AUTO_START_DEVELOPER_MODE = true;
+
 export const FASTPASS_CONFIG = {
   TICKET_PREFIX: "HC-",
   UNIT_PRICE_YEN: 100,
@@ -26,9 +29,9 @@ export const FASTPASS_CONFIG = {
     3: 200,
   },
   EVENT_DATES: {
-    1: null,
-    2: null,
-    3: null,
+    1: "2026-09-18",
+    2: "2026-09-19",
+    3: "2026-09-20",
   },
   MIN_TICKET_NUMBER: 1,
   NUMBER_MIN_DIGITS: 3,

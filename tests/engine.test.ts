@@ -33,14 +33,30 @@ function sell(
 
 describe("販売と発番", () => {
   it("開催日未設定のLIVE販売を拒否する", () => {
-    const data = createInitialData();
+    const data = createInitialData(Date.parse("2026-09-18T09:00:00+09:00"));
     data.system.maintenance = false;
-    expect(() => createCheckout(data, 1, "hold-live")).toThrowError(FastpassError);
+    const live = getActiveWorkspace(data);
+    live.businessDays[1].eventDate = null;
+    live.businessDays[2].eventDate = null;
+    live.businessDays[3].eventDate = null;
+    expect(() => createCheckout(data, 1, "hold-live", Date.parse("2026-09-18T09:01:00+09:00"))).toThrowError(FastpassError);
     try {
-      createCheckout(data, 1, "hold-live-2");
+      createCheckout(data, 1, "hold-live-2", Date.parse("2026-09-18T09:02:00+09:00"));
     } catch (error) {
       expect(error).toMatchObject({ code: "EVENT_DATE_NOT_CONFIGURED" });
     }
+  });
+
+  it("2026年9月18日から20日だけをLIVE販売日として扱う", () => {
+    const dayOne = createInitialData(Date.parse("2026-09-18T09:00:00+09:00"));
+    dayOne.system.maintenance = false;
+    expect(createCheckout(dayOne, 1, "hold-day-one", Date.parse("2026-09-18T09:01:00+09:00")).dayNumber).toBe(1);
+
+    const outside = createInitialData(Date.parse("2026-09-17T09:00:00+09:00"));
+    outside.system.maintenance = false;
+    expect(() => createCheckout(outside, 1, "hold-outside", Date.parse("2026-09-17T09:01:00+09:00"))).toThrowError(
+      expect.objectContaining({ code: "OUTSIDE_SALES_DATE" }),
+    );
   });
 
   it("DEVでは001から連続発番し、会計・釣銭・グループを記録する", () => {

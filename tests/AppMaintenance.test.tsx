@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import App from "../src/App";
+import { enableDeveloperMode, setMaintenance } from "../src/domain/engine";
 import { createInitialData } from "../src/domain/initialState";
 
 function jsonResponse(value: unknown): Response {
@@ -17,6 +18,8 @@ afterEach(() => {
 describe("営業停止中の操作画面", () => {
   it("販売と入場の操作を隠し、管理画面から再開すると復帰する", async () => {
     let data = createInitialData();
+    enableDeveloperMode(data);
+    setMaintenance(data, true);
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const path = typeof input === "string" ? input : input instanceof URL ? input.pathname : input.url;
       const serverNowMs = Date.now();
