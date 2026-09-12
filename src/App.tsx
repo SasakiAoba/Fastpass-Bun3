@@ -116,10 +116,11 @@ export default function App() {
   useEffect(() => {
     if (!authenticated || !data || mutating) return;
     const timer = window.setInterval(() => {
+      if (document.visibilityState === "hidden") return;
       void client.current.state().then(applyState).catch((error) => {
         if (error instanceof ApiClientError && error.status === 401) showError(error);
       });
-    }, 5_000);
+    }, 30_000);
     return () => window.clearInterval(timer);
   }, [applyState, authenticated, data, mutating, showError]);
 

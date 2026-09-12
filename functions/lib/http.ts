@@ -20,12 +20,16 @@ export function json(data: unknown, status = 200, extraHeaders: HeadersInit = {}
 }
 
 export function errorResponse(error: unknown, requestId?: string): Response {
+  const errorText = error instanceof Error ? error.message : String(error);
+  const quotaExceeded = /exceeded D1.*daily row read limit|D1.*daily.*limit|code:\s*7500/iu.test(errorText);
   const known = error instanceof ApiError;
-  const status = known ? error.status : 500;
+  const status = quotaExceeded ? 503 : known ? error.status : 500;
   const body: ApiErrorBody = {
     error: {
-      code: known ? error.code : "INTERNAL_ERROR",
-      message: known ? error.message : "サーバー処理を完了できませんでした。",
+      code: quotaExceeded ? "D1_DAILY_LIMIT_REACHED" : known ? error.code : "INTERNAL_ERROR",
+      message: quotaExceeded
+        ? "D1の1日利用上限に達しています。日本時間9:00以降にもう一度お試しください。"
+        : known ? error.message : "サーバー処理を完了できませんでした。",
       ...(known && error.details ? { details: error.details } : {}),
       ...(requestId ? { requestId } : {}),
     },
