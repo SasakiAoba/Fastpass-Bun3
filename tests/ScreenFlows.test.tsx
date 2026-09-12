@@ -1,12 +1,13 @@
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { AccountingScreen } from "../src/client/screens/AccountingScreen";
 import { AdmissionScreen } from "../src/client/screens/AdmissionScreen";
 import { HomeScreen } from "../src/client/screens/HomeScreen";
 import { SalesScreen } from "../src/client/screens/SalesScreen";
-import type { Commit, RequestConfirmation } from "../src/client/uiTypes";
+import type { Mutate, RequestConfirmation } from "../src/client/uiTypes";
 import {
   confirmHandover,
+  checkInTickets,
   createCheckout,
   enableDeveloperMode,
   finalizeSale,
@@ -32,8 +33,18 @@ function sell(
   return finalizeSale(data, checkout.id, tenderedYen, `${id}-sale`);
 }
 
-function directCommit(data: ReturnType<typeof createInitialData>): Commit {
-  return (recipe) => recipe(data);
+function directMutate(data: ReturnType<typeof createInitialData>): Mutate {
+  return async (action, payload) => {
+    if (action === "CREATE_CHECKOUT") return createCheckout(data, payload.quantity!, crypto.randomUUID()) as never;
+    if (action === "FINALIZE_SALE") return finalizeSale(data, payload.checkoutId!, payload.tenderedYen!, crypto.randomUUID()) as never;
+    if (action === "CONFIRM_HANDOVER") return confirmHandover(data, payload.kind!, payload.sourceId!, crypto.randomUUID()) as never;
+    if (action === "HANDOVER_AND_CHECKIN") {
+      const sale = data.sales.find((candidate) => candidate.id === payload.saleId)!;
+      confirmHandover(data, "SALE", sale.id, crypto.randomUUID());
+      return checkInTickets(data, sale.ticketNumbers, crypto.randomUUID()) as never;
+    }
+    throw new Error(`unexpected action ${action}`);
+  };
 }
 
 describe("会計表示", () => {
@@ -69,7 +80,7 @@ describe("会計表示", () => {
 });
 
 describe("販売直後の入場使用", () => {
-  it("販売した全券の受渡しと入場をまとめて確定する", () => {
+  it("販売した全券の受渡しと入場をまとめて確定する", async () => {
     const data = createDevelopmentData();
     const requestConfirmation: RequestConfirmation = (_title, _description, action) => action();
 
@@ -78,7 +89,7 @@ describe("販売直後の入場使用", () => {
         data={data}
         summary={getSummary(data)}
         nowMs={Date.now()}
-        commit={directCommit(data)}
+        mutate={directMutate(data)}
         requestConfirmation={requestConfirmation}
       />,
     );
@@ -86,13 +97,14 @@ describe("販売直後の入場使用", () => {
     fireEvent.click(screen.getByRole("button", { name: "2" }));
     fireEvent.click(screen.getByRole("button", { name: "人数をカートへ追加" }));
     fireEvent.click(screen.getByRole("button", { name: "会計へ進む・2枚を確保" }));
+    await screen.findByRole("button", { name: "ちょうど 200円" });
     fireEvent.click(screen.getByRole("button", { name: "ちょうど 200円" }));
     fireEvent.click(screen.getByRole("button", { name: "会計確定・発番" }));
 
-    expect(screen.getByRole("button", { name: "このまま入場使用（2枚）" })).toBeEnabled();
+    expect(await screen.findByRole("button", { name: "このまま入場使用（2枚）" })).toBeEnabled();
     fireEvent.click(screen.getByRole("button", { name: "このまま入場使用（2枚）" }));
 
-    expect(data.sales[0].handoverConfirmedAtMs).not.toBeNull();
+    await waitFor(() => expect(data.sales[0].handoverConfirmedAtMs).not.toBeNull());
     expect(data.tickets.map((ticket) => ticket.status)).toEqual(["USED", "USED"]);
     expect(data.admissions).toHaveLength(1);
     expect(data.admissions[0].ticketIds).toHaveLength(2);
@@ -105,10 +117,9 @@ describe("入場画面の一覧", () => {
   it("5枚以上でも一覧枠と確定ボタンを分離する", () => {
     const data = createDevelopmentData();
     sell(data, 6, 600, "admission-scroll");
-    const commit = directCommit(data);
     const requestConfirmation: RequestConfirmation = () => undefined;
     const { container } = render(
-      <AdmissionScreen data={data} commit={commit} requestConfirmation={requestConfirmation} />,
+      <AdmissionScreen data={data} mutate={directMutate(data)} requestConfirmation={requestConfirmation} />,
     );
 
     for (const number of [1, 2, 3, 4, 5, 6]) {

@@ -12,13 +12,17 @@
     "preview": "vite preview",
     "test": "vitest run --reporter=verbose --pool=threads --maxWorkers=1 --no-file-parallelism",
     "test:watch": "vitest",
-    "typecheck": "tsc -p tsconfig.app.json --pretty false"
+    "typecheck": "tsc -p tsconfig.app.json --pretty false && tsc -p tsconfig.functions.json --pretty false",
+    "test:d1": "node scripts/d1-smoke.mjs",
+    "auth:sql": "node scripts/generate-auth-sql.mjs"
   },
   "dependencies": {
+    "@noble/hashes": "^2.0.1",
     "react": "^19.1.1",
     "react-dom": "^19.1.1"
   },
   "devDependencies": {
+    "@cloudflare/workers-types": "^5.20260911.1",
     "@testing-library/jest-dom": "^6.8.0",
     "@testing-library/react": "^16.3.0",
     "@types/react": "^19.1.12",
@@ -27,6 +31,7 @@
     "jsdom": "^26.1.0",
     "typescript": "~5.8.3",
     "vite": "^7.1.5",
-    "vitest": "^5.0.0"
+    "vitest": "^5.0.0",
+    "wrangler": "^4.131.1"
   }
 }

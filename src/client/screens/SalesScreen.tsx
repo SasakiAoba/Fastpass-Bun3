@@ -1,25 +1,18 @@
 import { useEffect, useMemo, useState } from "react";
 import { NumericKeypad } from "../components/NumericKeypad";
-import {
-  cancelCheckout,
-  checkInTickets,
-  confirmHandover,
-  createCheckout,
-  finalizeSale,
-} from "../../domain/engine";
 import { formatGroupNumber, formatTicketCode, formatYen } from "../../domain/format";
 import type { Checkout, FastpassData, SaleResult, Summary } from "../../domain/types";
-import type { Commit, RequestConfirmation } from "../uiTypes";
+import type { Mutate, RequestConfirmation } from "../uiTypes";
 
 type SalesScreenProps = {
   data: FastpassData;
   summary: Summary;
   nowMs: number;
-  commit: Commit;
+  mutate: Mutate;
   requestConfirmation: RequestConfirmation;
 };
 
-export function SalesScreen({ data, summary, nowMs, commit, requestConfirmation }: SalesScreenProps) {
+export function SalesScreen({ data, summary, nowMs, mutate, requestConfirmation }: SalesScreenProps) {
   const [cartQuantity, setCartQuantity] = useState(0);
   const [numericValue, setNumericValue] = useState("");
   const [checkout, setCheckout] = useState<Checkout | null>(null);
@@ -48,35 +41,26 @@ export function SalesScreen({ data, summary, nowMs, commit, requestConfirmation 
     setNumericValue("");
   };
 
-  const hold = () => {
-    const created = commit(
-      (draft) => createCheckout(draft, cartQuantity, crypto.randomUUID()),
-      `${cartQuantity}枚を一時確保しました。`,
-    );
+  const hold = async () => {
+    const created = await mutate<Checkout>("CREATE_CHECKOUT", { quantity: cartQuantity }, `${cartQuantity}枚を一時確保しました。`);
     if (created) {
       setCheckout(created);
       setNumericValue("");
     }
   };
 
-  const finalize = () => {
+  const finalize = async () => {
     if (!checkout) return;
-    const saleResult = commit(
-      (draft) => finalizeSale(draft, checkout.id, Number(numericValue), crypto.randomUUID()),
-      "販売と発番が完了しました。木製券と釣銭を確認してください。",
-    );
+    const saleResult = await mutate<SaleResult>("FINALIZE_SALE", { checkoutId: checkout.id, tenderedYen: Number(numericValue) }, "販売と発番が完了しました。木製券と釣銭を確認してください。");
     if (saleResult) {
       setResult(saleResult);
       setNumericValue("");
     }
   };
 
-  const cancel = () => {
+  const cancel = async () => {
     if (!checkout) return;
-    const cancelled = commit(
-      (draft) => cancelCheckout(draft, checkout.id, crypto.randomUUID()),
-      "一時確保を解除しました。",
-    );
+    const cancelled = await mutate<{ cancelled: boolean }>("CANCEL_CHECKOUT", { checkoutId: checkout.id }, "一時確保を解除しました。");
     if (cancelled) {
       setCheckout(null);
       setCartQuantity(0);
@@ -91,12 +75,9 @@ export function SalesScreen({ data, summary, nowMs, commit, requestConfirmation 
     setNumericValue("");
   };
 
-  const completeHandover = () => {
+  const completeHandover = async () => {
     if (!result) return;
-    const confirmed = commit(
-      (draft) => confirmHandover(draft, "SALE", result.saleId, crypto.randomUUID()),
-      "受渡しを確認しました。次の会計を開始できます。",
-    );
+    const confirmed = await mutate<{ confirmed: boolean }>("CONFIRM_HANDOVER", { kind: "SALE", sourceId: result.saleId }, "受渡しを確認しました。次の会計を開始できます。");
     if (confirmed !== null) resetSale();
   };
 
@@ -106,14 +87,8 @@ export function SalesScreen({ data, summary, nowMs, commit, requestConfirmation 
     requestConfirmation(
       "このまま入場使用",
       `今回販売した${currentResult.ticketNumbers.length}枚すべてを使用済みにします。実際に入場させることを確認してください。`,
-      () => {
-        const admission = commit(
-          (draft) => {
-            confirmHandover(draft, "SALE", currentResult.saleId, crypto.randomUUID());
-            return checkInTickets(draft, currentResult.ticketNumbers, crypto.randomUUID());
-          },
-          `${currentResult.ticketNumbers.length}枚の受渡しと入場使用を確定しました。`,
-        );
+      async () => {
+        const admission = await mutate<{ admissionId: string }>("HANDOVER_AND_CHECKIN", { saleId: currentResult.saleId }, `${currentResult.ticketNumbers.length}枚の受渡しと入場使用を確定しました。`);
         if (admission) resetSale();
       },
     );
@@ -132,10 +107,10 @@ export function SalesScreen({ data, summary, nowMs, commit, requestConfirmation 
           </dl>
           <div className="alert alert--warning">画面と実物を照合し、すべての券と釣銭を渡してから確認してください。</div>
           <div className="result-actions fixed-action">
-            <button type="button" className="secondary-button" onClick={completeHandoverAndCheckIn}>
+              <button type="button" className="secondary-button" onClick={() => void completeHandoverAndCheckIn()}>
               このまま入場使用（{result.ticketNumbers.length}枚）
             </button>
-            <button type="button" className="primary-button" onClick={completeHandover}>受渡しを確認して次の会計へ</button>
+            <button type="button" className="primary-button" onClick={() => void completeHandover()}>受渡しを確認して次の会計へ</button>
           </div>
         </section>
         <aside className="side-panel issued-list">
@@ -169,7 +144,7 @@ export function SalesScreen({ data, summary, nowMs, commit, requestConfirmation 
             {numericValue && Number(numericValue) < totalYen && (
               <div className="alert alert--danger">あと{formatYen(totalYen - Number(numericValue))}必要です。</div>
             )}
-            <button type="button" className="secondary-button" onClick={cancel}>会計を取り消して確保を解除</button>
+            <button type="button" className="secondary-button" onClick={() => void cancel()}>会計を取り消して確保を解除</button>
           </>
         ) : (
           <>
@@ -183,7 +158,7 @@ export function SalesScreen({ data, summary, nowMs, commit, requestConfirmation 
               <button type="button" onClick={() => setCartQuantity(0)} disabled={cartQuantity === 0}>カートを空にする</button>
             </div>
             <div className="cart-total"><span>合計</span><strong>{formatYen(cartQuantity * 100)}</strong></div>
-            <button type="button" className="primary-button fixed-action" onClick={hold} disabled={cartQuantity === 0}>会計へ進む・{cartQuantity}枚を確保</button>
+            <button type="button" className="primary-button fixed-action" onClick={() => void hold()} disabled={cartQuantity === 0}>会計へ進む・{cartQuantity}枚を確保</button>
           </>
         )}
       </section>
@@ -195,7 +170,7 @@ export function SalesScreen({ data, summary, nowMs, commit, requestConfirmation 
         <NumericKeypad
           value={numericValue}
           onChange={setNumericValue}
-          onConfirm={checkout ? finalize : addQuantity}
+          onConfirm={checkout ? () => void finalize() : addQuantity}
           confirmLabel={checkout ? "会計確定・発番" : "人数をカートへ追加"}
           disabled={checkout ? secondsRemaining <= 0 : false}
           confirmDisabled={checkout ? Number(numericValue) < totalYen : cartQuantity + Number(numericValue || 0) > 200}

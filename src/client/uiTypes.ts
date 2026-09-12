@@ -1,11 +1,11 @@
-import type { FastpassData } from "../domain/types";
+import type { MutationAction, MutationPayload } from "../shared/api";
 
-export type Commit = <T>(recipe: (draft: FastpassData) => T, successMessage?: string) => T | null;
+export type Mutate = <T>(action: MutationAction, payload: MutationPayload, successMessage?: string) => Promise<T | null>;
 
 export type RequestConfirmation = (
   title: string,
   description: string,
-  action: () => void,
+  action: () => void | Promise<void>,
 ) => void;
 
 export type ScreenName = "home" | "sales" | "admission" | "records" | "accounting" | "admin";

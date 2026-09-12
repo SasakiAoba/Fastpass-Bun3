@@ -1,37 +1,20 @@
-import { useRef, useState, type ChangeEvent } from "react";
-import { FASTPASS_CONFIG, validateConfig, type DayNumber } from "../../config/fastpass.config";
-import {
-  disableDeveloperMode,
-  enableDeveloperMode,
-  getActiveWorkspace,
-  renameDevice,
-  resetLiveWorkspace,
-  setDeveloperDay,
-  setMaintenance,
-} from "../../domain/engine";
-import { downloadText, formatDateTime } from "../../domain/format";
+import { useState } from "react";
+import { type DayNumber } from "../../config/fastpass.config";
+import { getActiveWorkspace } from "../../domain/engine";
+import { formatDateTime } from "../../domain/format";
 import type { FastpassData } from "../../domain/types";
-import {
-  auditCsv,
-  refundsCsv,
-  salesCsv,
-  ticketsCsv,
-  workspaceJson,
-} from "../../infrastructure/exportData";
-import type { Commit, RequestConfirmation } from "../uiTypes";
+import { downloadD1Export } from "../../infrastructure/apiClient";
+import type { Mutate, RequestConfirmation } from "../uiTypes";
 
 type AdminScreenProps = {
   data: FastpassData;
-  commit: Commit;
+  mutate: Mutate;
   requestConfirmation: RequestConfirmation;
-  onRestore: (raw: string) => boolean;
 };
 
-export function AdminScreen({ data, commit, requestConfirmation, onRestore }: AdminScreenProps) {
+export function AdminScreen({ data, mutate, requestConfirmation }: AdminScreenProps) {
   const workspace = getActiveWorkspace(data);
   const [deviceName, setDeviceName] = useState(data.system.device.name);
-  const fileInput = useRef<HTMLInputElement>(null);
-  const configErrors = validateConfig(FASTPASS_CONFIG);
   const isDev = data.system.mode === "DEVELOPMENT";
 
   const confirmAction = (title: string, description: string, action: () => void) => {
@@ -41,64 +24,38 @@ export function AdminScreen({ data, commit, requestConfirmation, onRestore }: Ad
   const toggleMaintenance = () => {
     const next = !data.system.maintenance;
     confirmAction(next ? "営業を停止" : "営業を再開", next ? "全ての新規業務操作を停止します。記録と会計は閲覧できます。" : "現在の領域で受付操作を再開します。モードと設定を確認してください。", () => {
-      commit((draft) => setMaintenance(draft, next), next ? "営業を停止しました。" : "営業を再開しました。");
+      void mutate("SET_MAINTENANCE", { maintenance: next }, next ? "営業を停止しました。" : "営業を再開しました。");
     });
   };
 
   const startDevelopment = () => {
     confirmAction("開発者モードを開始", "すべての受付画面をテストデータ領域へ切り替えます。実物の券と現金は扱わないでください。", () => {
-      commit((draft) => enableDeveloperMode(draft), "開発者モードを開始しました。日別・総発行上限は適用されません。");
+      void mutate("ENABLE_DEVELOPER_MODE", {}, "開発者モードを開始しました。日別・総発行上限は適用されません。");
     });
   };
 
   const stopDevelopment = () => {
     confirmAction("テストデータを削除", "現在のDEV領域にあるチケット、販売、入場、返金、現金、履歴を削除します。本番データは保持します。", () => {
-      commit((draft) => disableDeveloperMode(draft), "DEVデータを削除しました。本番の営業停止状態です。");
+      void mutate("DISABLE_DEVELOPER_MODE", {}, "DEVデータを削除しました。本番の営業停止状態です。");
     });
   };
 
   const resetLive = () => {
     confirmAction("本番運用回をリセット", "現在の本番運用回を保存し、新しい運用回を作成します。番号と会計は0から始まります。", () => {
-      commit((draft) => resetLiveWorkspace(draft), "新しい本番運用回を作成しました。");
+      void mutate("RESET_LIVE_WORKSPACE", {}, "新しい本番運用回を作成しました。");
     });
   };
 
-  const updateDeviceName = () => {
-    commit((draft) => renameDevice(draft, deviceName), "端末名を変更しました。");
+  const updateDeviceName = async () => {
+    await mutate("RENAME_DEVICE", { name: deviceName }, "端末名を変更しました。");
   };
 
   const setDay = (day: DayNumber) => {
-    commit((draft) => setDeveloperDay(draft, day), `テスト日を${day}日目に変更しました。`);
+    void mutate("SET_DEVELOPER_DAY", { dayNumber: day }, `テスト日を${day}日目に変更しました。`);
   };
 
   const exportFile = (kind: "json" | "tickets" | "sales" | "refunds" | "audit") => {
-    const prefix = `fastpass-live-${workspace.sequence}-${new Date().toISOString().slice(0, 10)}`;
-    const exporters = {
-      json: () => workspaceJson(data, workspace.id),
-      tickets: () => ticketsCsv(data, workspace.id),
-      sales: () => salesCsv(data, workspace.id),
-      refunds: () => refundsCsv(data, workspace.id),
-      audit: () => auditCsv(data, workspace.id),
-    };
-    downloadText(`${prefix}-${kind}.${kind === "json" ? "json" : "csv"}`, exporters[kind](), kind === "json" ? "application/json" : "text/csv;charset=utf-8");
-  };
-
-  const backupAll = () => {
-    downloadText(
-      `fastpass-local-backup-${new Date().toISOString().replaceAll(":", "-")}.json`,
-      JSON.stringify(data, null, 2),
-      "application/json",
-    );
-  };
-
-  const chooseRestore = async (event: ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    event.target.value = "";
-    if (!file) return;
-    const raw = await file.text();
-    confirmAction("ローカルバックアップを復元", "現在の端末内業務データを、選択したJSONの内容で置き換えます。パスワードとログイン状態は変更されません。", () => {
-      onRestore(raw);
-    });
+    downloadD1Export(kind);
   };
 
   return (
@@ -134,26 +91,25 @@ export function AdminScreen({ data, commit, requestConfirmation, onRestore }: Ad
       </section>
 
       <section className="admin-section">
-        <div className="section-heading"><div><p className="eyebrow">コード上の唯一の業務設定</p><h2>有効な設定</h2></div><span className={configErrors.length === 0 ? "status-pill status-pill--done" : "status-pill status-pill--pending"}>{configErrors.length === 0 ? "設定値正常" : `${configErrors.length}件の異常`}</span></div>
-        {configErrors.map((error) => <div className="alert alert--danger" key={error}>{error}</div>)}
+        <div className="section-heading"><div><p className="eyebrow">D1運用回に固定保存</p><h2>有効な設定</h2></div><span className="status-pill status-pill--done">設定読込済み</span></div>
         <div className="config-grid">
-          <div><span>表示番号</span><strong>{FASTPASS_CONFIG.TICKET_PREFIX}001～{FASTPASS_CONFIG.TICKET_PREFIX}{String(FASTPASS_CONFIG.MAX_TICKET_NUMBER).padStart(3, "0")}</strong></div>
-          <div><span>単価</span><strong>{FASTPASS_CONFIG.UNIT_PRICE_YEN}円</strong></div>
-          <div><span>日別上限</span><strong>各日 {FASTPASS_CONFIG.DAILY_TICKET_LIMITS[1]}枚（仮値）</strong></div>
-          <div><span>開催日</span><strong>3日とも未設定</strong></div>
-          <div><span>仮確保</span><strong>{FASTPASS_CONFIG.CHECKOUT_HOLD_SECONDS}秒</strong></div>
+          <div><span>表示番号</span><strong>{workspace.configSnapshot.TICKET_PREFIX}001～{workspace.configSnapshot.TICKET_PREFIX}{String(workspace.configSnapshot.MAX_TICKET_NUMBER).padStart(3, "0")}</strong></div>
+          <div><span>単価</span><strong>{workspace.configSnapshot.UNIT_PRICE_YEN}円</strong></div>
+          <div><span>日別上限</span><strong>各日 {workspace.configSnapshot.DAILY_TICKET_LIMITS[1]}枚（仮値）</strong></div>
+          <div><span>開催日</span><strong>{Object.values(workspace.configSnapshot.EVENT_DATES).every((date) => date === null) ? "3日とも未設定" : "D1設定済み"}</strong></div>
+          <div><span>仮確保</span><strong>{workspace.configSnapshot.CHECKOUT_HOLD_SECONDS}秒</strong></div>
           <div><span>最終保存</span><strong>{formatDateTime(data.savedAtMs)}</strong></div>
         </div>
       </section>
 
       <section className="admin-section">
-        <div className="section-heading"><div><p className="eyebrow">このブラウザーだけの識別</p><h2>ローカル端末</h2></div></div>
-        <div className="inline-form"><label className="text-field"><span>端末名</span><input value={deviceName} onChange={(event) => setDeviceName(event.target.value)} maxLength={30} /></label><button type="button" className="secondary-button" onClick={updateDeviceName} disabled={deviceName.trim() === data.system.device.name}>端末名を保存</button></div>
+        <div className="section-heading"><div><p className="eyebrow">操作履歴に記録される識別名</p><h2>この端末</h2></div></div>
+        <div className="inline-form"><label className="text-field"><span>端末名</span><input value={deviceName} onChange={(event) => setDeviceName(event.target.value)} maxLength={100} /></label><button type="button" className="secondary-button" onClick={() => void updateDeviceName()} disabled={deviceName.trim() === data.system.device.name}>端末名を保存</button></div>
       </section>
 
       <section className="admin-section">
-        <div className="section-heading"><div><p className="eyebrow">認証情報を含めません</p><h2>データ出力・ローカルバックアップ</h2></div></div>
-        {isDev ? <div className="alert alert--warning">開発者モード中は正式な業務出力を無効にしています。全体バックアップはローカル復旧専用です。</div> : (
+        <div className="section-heading"><div><p className="eyebrow">認証情報を含めません</p><h2>本番データ出力</h2></div></div>
+        {isDev ? <div className="alert alert--warning">開発者モード中は正式な本番業務出力を無効にしています。</div> : (
           <div className="export-grid">
             <button type="button" onClick={() => exportFile("json")}>本番JSON</button>
             <button type="button" onClick={() => exportFile("tickets")}>チケットCSV</button>
@@ -162,12 +118,7 @@ export function AdminScreen({ data, commit, requestConfirmation, onRestore }: Ad
             <button type="button" onClick={() => exportFile("audit")}>操作履歴CSV</button>
           </div>
         )}
-        <div className="backup-actions">
-          <button type="button" className="secondary-button" onClick={backupAll}>端末内データをバックアップ</button>
-          <button type="button" className="secondary-button" onClick={() => fileInput.current?.click()}>バックアップから復元</button>
-          <input ref={fileInput} className="visually-hidden" type="file" accept="application/json,.json" onChange={(event) => void chooseRestore(event)} />
-        </div>
-        <p className="field-note">バックアップはD1移行用ではありません。localStorageの確認データはD1へ読み込みません。</p>
+        <p className="field-note">表示中のD1本番運用回をサーバーから直接出力します。共有パスワード、Cookie、セッション情報は含みません。</p>
       </section>
     </div>
   );

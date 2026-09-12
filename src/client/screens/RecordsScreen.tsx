@@ -1,15 +1,15 @@
 import { useMemo, useState } from "react";
 import { NumericKeypad } from "../components/NumericKeypad";
-import { confirmHandover, getActiveWorkspace } from "../../domain/engine";
+import { getActiveWorkspace } from "../../domain/engine";
 import { formatDateTime, formatGroupNumber, formatTicketCode, formatYen } from "../../domain/format";
 import type { FastpassData } from "../../domain/types";
-import type { Commit } from "../uiTypes";
+import type { Mutate } from "../uiTypes";
 
 type RecordTab = "TICKETS" | "SALES" | "ENTRY" | "REFUNDS" | "AUDIT";
 
 type RecordsScreenProps = {
   data: FastpassData;
-  commit: Commit;
+  mutate: Mutate;
 };
 
 const TABS: Array<{ id: RecordTab; label: string }> = [
@@ -22,7 +22,7 @@ const TABS: Array<{ id: RecordTab; label: string }> = [
 
 const PAGE_SIZE = 30;
 
-export function RecordsScreen({ data, commit }: RecordsScreenProps) {
+export function RecordsScreen({ data, mutate }: RecordsScreenProps) {
   const [tab, setTab] = useState<RecordTab>("TICKETS");
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(0);
@@ -45,10 +45,7 @@ export function RecordsScreen({ data, commit }: RecordsScreenProps) {
   };
 
   const confirmPending = (kind: "SALE" | "REFUND", id: string) => {
-    commit(
-      (draft) => confirmHandover(draft, kind, id, crypto.randomUUID()),
-      kind === "SALE" ? "券・釣銭の受渡しを確認しました。" : "返金の受渡しを確認しました。",
-    );
+    void mutate("CONFIRM_HANDOVER", { kind, sourceId: id }, kind === "SALE" ? "券・釣銭の受渡しを確認しました。" : "返金の受渡しを確認しました。");
   };
 
   const rows = (() => {

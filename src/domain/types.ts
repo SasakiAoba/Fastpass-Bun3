@@ -2,7 +2,7 @@ import type { DayNumber, FastpassConfig } from "../config/fastpass.config";
 
 export type SystemMode = "LIVE" | "ENTERING_DEV" | "DEVELOPMENT" | "PURGING_DEV";
 export type WorkspaceKind = "LIVE" | "DEV";
-export type WorkspaceStatus = "ACTIVE" | "ARCHIVED";
+export type WorkspaceStatus = "ACTIVE" | "ARCHIVED" | "PURGING";
 export type CheckoutStatus = "HELD" | "CANCELLED" | "EXPIRED" | "COMPLETED";
 export type TicketStatus = "ISSUED" | "USED" | "REFUNDED";
 export type TicketEventType = "SALE" | "CHECKIN" | "CHECKIN_REVERSAL" | "REFUND";
@@ -204,7 +204,7 @@ export type AuditLog = {
   id: string;
   workspaceId: string | null;
   type: string;
-  status: "SUCCESS" | "REJECTED";
+  status: "SUCCESS" | "REJECTED" | "UNKNOWN";
   occurredAtMs: number;
   deviceId: string;
   operationId: string | null;

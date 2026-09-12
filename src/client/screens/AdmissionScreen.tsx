@@ -1,21 +1,14 @@
 import { useMemo, useState } from "react";
 import { NumericKeypad } from "../components/NumericKeypad";
-import {
-  checkInTickets,
-  confirmHandover,
-  previewTickets,
-  refundTickets,
-  reverseCheckin,
-} from "../../domain/engine";
 import { formatDateTime, formatGroupNumber, formatTicketCode, formatYen } from "../../domain/format";
 import type { FastpassData, Refund, TicketStatus } from "../../domain/types";
-import type { Commit, RequestConfirmation } from "../uiTypes";
+import type { Mutate, RequestConfirmation } from "../uiTypes";
 
 type OperationMode = "CHECKIN" | "REFUND" | "REVERSAL";
 
 type AdmissionScreenProps = {
   data: FastpassData;
-  commit: Commit;
+  mutate: Mutate;
   requestConfirmation: RequestConfirmation;
 };
 
@@ -25,13 +18,14 @@ const STATUS_LABELS: Record<TicketStatus, string> = {
   REFUNDED: "払い戻し済み",
 };
 
-export function AdmissionScreen({ data, commit, requestConfirmation }: AdmissionScreenProps) {
+export function AdmissionScreen({ data, mutate, requestConfirmation }: AdmissionScreenProps) {
   const [mode, setMode] = useState<OperationMode>("CHECKIN");
   const [numericValue, setNumericValue] = useState("");
   const [numbers, setNumbers] = useState<number[]>([]);
   const [reason, setReason] = useState("誤入力");
   const [recovered, setRecovered] = useState(false);
   const [refundResult, setRefundResult] = useState<Refund | null>(null);
+  const [selectionError, setSelectionError] = useState<string | null>(null);
 
   const workspaceId =
     data.system.mode === "DEVELOPMENT" ? data.system.devWorkspaceId : data.system.liveWorkspaceId;
@@ -63,36 +57,31 @@ export function AdmissionScreen({ data, commit, requestConfirmation }: Admission
   const addNumber = () => {
     const number = Number(numericValue);
     if (!Number.isSafeInteger(number) || number < 1 || numbers.includes(number)) return;
-    const preview = commit((draft) => previewTickets(draft, [number]));
-    if (!preview) return;
-    const status = preview[0].ticket.status;
+    const item = data.tickets.find((candidate) => candidate.workspaceId === workspaceId && candidate.serialNumber === number);
+    if (!item) {
+      setSelectionError("販売記録のないチケット番号です。");
+      return;
+    }
+    const status = item.status;
     if (mode === "CHECKIN" && status !== "ISSUED") {
-      commit(() => {
-        throw new Error(`この券は${STATUS_LABELS[status]}のため入場一覧へ追加できません。`);
-      });
+      setSelectionError(`この券は${STATUS_LABELS[status]}のため入場一覧へ追加できません。`);
       return;
     }
     if (mode === "REFUND" && status !== "ISSUED") {
-      commit(() => {
-        throw new Error(`この券は${STATUS_LABELS[status]}のため払い戻しできません。`);
-      });
+      setSelectionError(`この券は${STATUS_LABELS[status]}のため払い戻しできません。`);
       return;
     }
     if (mode === "REVERSAL" && status !== "USED") {
-      commit(() => {
-        throw new Error("現在使用済みの券だけを取り消せます。");
-      });
+      setSelectionError("現在使用済みの券だけを取り消せます。");
       return;
     }
+    setSelectionError(null);
     setNumbers((current) => (mode === "REVERSAL" ? [number] : [...current, number]));
     setNumericValue("");
   };
 
-  const confirmCheckin = () => {
-    const result = commit(
-      (draft) => checkInTickets(draft, numbers, crypto.randomUUID()),
-      `${numbers.length}枚の入場受付が完了しました。成功表示を確認してから入場させてください。`,
-    );
+  const confirmCheckin = async () => {
+    const result = await mutate<{ admissionId: string }>("CHECKIN", { serialNumbers: numbers }, `${numbers.length}枚の入場受付が完了しました。成功表示を確認してから入場させてください。`);
     if (result) reset("CHECKIN");
   };
 
@@ -100,11 +89,8 @@ export function AdmissionScreen({ data, commit, requestConfirmation }: Admission
     requestConfirmation(
       "払い戻しを確定",
       `${numbers.length}枚を払い戻します。木製券の回収と返金額を確認してください。`,
-      () => {
-        const refund = commit(
-          (draft) => refundTickets(draft, numbers, reason, crypto.randomUUID()),
-          "払い戻しを記録しました。現金を渡してから受渡確認を押してください。",
-        );
+      async () => {
+        const refund = await mutate<Refund>("REFUND", { serialNumbers: numbers, reason }, "払い戻しを記録しました。現金を渡してから受渡確認を押してください。");
         if (refund) setRefundResult(refund);
       },
     );
@@ -117,22 +103,16 @@ export function AdmissionScreen({ data, commit, requestConfirmation }: Admission
     requestConfirmation(
       "使用済みを取り消す",
       `${formatTicketCode(item.number)}を未使用へ戻します。履歴は削除されません。`,
-      () => {
-        const completed = commit(
-          (draft) => reverseCheckin(draft, item.number, reason, eventId, crypto.randomUUID()),
-          `${formatTicketCode(item.number)}を未使用へ戻しました。`,
-        );
+      async () => {
+        const completed = await mutate<{ reversed: boolean }>("REVERSE_CHECKIN", { serialNumber: item.number, reason, expectedUseEventId: eventId }, `${formatTicketCode(item.number)}を未使用へ戻しました。`);
         if (completed !== null) reset("CHECKIN");
       },
     );
   };
 
-  const confirmRefundHandover = () => {
+  const confirmRefundHandover = async () => {
     if (!refundResult) return;
-    const done = commit(
-      (draft) => confirmHandover(draft, "REFUND", refundResult.id, crypto.randomUUID()),
-      "返金の受渡しを確認しました。",
-    );
+    const done = await mutate<{ confirmed: boolean }>("CONFIRM_HANDOVER", { kind: "REFUND", sourceId: refundResult.id }, "返金の受渡しを確認しました。");
     if (done !== null) reset("CHECKIN");
   };
 
@@ -145,7 +125,7 @@ export function AdmissionScreen({ data, commit, requestConfirmation }: Admission
           <strong className="refund-total">{formatYen(refundResult.totalYen)}</strong>
           <p>{refundResult.ticketIds.length}枚分です。係員が現金を渡した後に、受渡しを確認してください。</p>
           <div className="alert alert--warning">通信や画面操作を繰り返して、現金を二重に渡さないでください。</div>
-          <button type="button" className="primary-button" onClick={confirmRefundHandover}>返金受渡しを確認</button>
+          <button type="button" className="primary-button" onClick={() => void confirmRefundHandover()}>返金受渡しを確認</button>
         </section>
       </div>
     );
@@ -196,11 +176,12 @@ export function AdmissionScreen({ data, commit, requestConfirmation }: Admission
               )}
             </div>
           )}
+          {selectionError && <div className="alert alert--danger" role="alert">{selectionError}</div>}
           <button
             type="button"
             className="primary-button fixed-action"
             disabled={!validForConfirmation}
-            onClick={mode === "CHECKIN" ? confirmCheckin : mode === "REFUND" ? confirmRefund : confirmReversal}
+            onClick={mode === "CHECKIN" ? () => void confirmCheckin() : mode === "REFUND" ? confirmRefund : confirmReversal}
           >
             {mode === "CHECKIN" ? `${numbers.length}枚を入場確定` : mode === "REFUND" ? `${numbers.length}枚の払い戻し確認へ` : "使用済みを取り消す"}
           </button>

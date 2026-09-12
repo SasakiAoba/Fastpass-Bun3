@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { AccountingScreen } from "./client/screens/AccountingScreen";
 import { AdminScreen } from "./client/screens/AdminScreen";
 import { AdmissionScreen } from "./client/screens/AdmissionScreen";
@@ -7,16 +7,11 @@ import { HomeScreen } from "./client/screens/HomeScreen";
 import { RecordsScreen } from "./client/screens/RecordsScreen";
 import { SalesScreen } from "./client/screens/SalesScreen";
 import { ConfirmationDialog } from "./client/components/ConfirmationDialog";
-import type { Commit, RequestConfirmation, ScreenName } from "./client/uiTypes";
+import type { Mutate, RequestConfirmation, ScreenName } from "./client/uiTypes";
 import { getActiveWorkspace, getSummary } from "./domain/engine";
-import { isFastpassError } from "./domain/errors";
 import { formatDateTime } from "./domain/format";
 import type { FastpassData } from "./domain/types";
-import {
-  endLocalSession,
-  isLocalSessionValid,
-} from "./infrastructure/localAuth";
-import { LocalStorageRepository } from "./infrastructure/localStorageRepository";
+import { ApiClient, ApiClientError, rememberDeviceName } from "./infrastructure/apiClient";
 
 type Notice = {
   kind: "success" | "error" | "warning";
@@ -27,7 +22,7 @@ type Notice = {
 type ConfirmationState = {
   title: string;
   description: string;
-  action: () => void;
+  action: () => void | Promise<void>;
 };
 
 const NAVIGATION: Array<{ id: ScreenName; label: string; short: string }> = [
@@ -40,23 +35,73 @@ const NAVIGATION: Array<{ id: ScreenName; label: string; short: string }> = [
 ];
 
 export default function App() {
-  const repository = useRef(new LocalStorageRepository());
-  const initialLoad = useMemo(() => repository.current.load(), []);
-  const [data, setData] = useState<FastpassData>(initialLoad.data);
-  const [authenticated, setAuthenticated] = useState(() => isLocalSessionValid());
+  const client = useRef(new ApiClient());
+  const [data, setData] = useState<FastpassData | null>(null);
+  const [authenticated, setAuthenticated] = useState(false);
+  const [initialized, setInitialized] = useState(true);
+  const [booting, setBooting] = useState(true);
+  const [serverOffsetMs, setServerOffsetMs] = useState(0);
+  const [mutating, setMutating] = useState(false);
+  const mutatingRef = useRef(false);
   const [screen, setScreen] = useState<ScreenName>("home");
   const [nowMs, setNowMs] = useState(Date.now());
-  const [notice, setNotice] = useState<Notice | null>(
-    initialLoad.warning ? { kind: "warning", message: initialLoad.warning } : null,
-  );
+  const [notice, setNotice] = useState<Notice | null>(null);
   const [confirmation, setConfirmation] = useState<ConfirmationState | null>(null);
 
   useEffect(() => {
     const timer = window.setInterval(() => {
-      setNowMs(Date.now());
+      setNowMs(Date.now() + serverOffsetMs);
     }, 1_000);
     return () => window.clearInterval(timer);
+  }, [serverOffsetMs]);
+
+  const applyState = useCallback((next: { data: FastpassData; serverNowMs: number }) => {
+    setData(next.data);
+    setServerOffsetMs(next.serverNowMs - Date.now());
+    setNowMs(next.serverNowMs);
   }, []);
+
+  const showError = useCallback((error: unknown) => {
+    const apiError = error instanceof ApiClientError ? error : null;
+    if (apiError?.status === 401) {
+      setAuthenticated(false);
+      setData(null);
+    }
+    setNotice({
+      kind: "error",
+      message: apiError ? `${apiError.code}: ${apiError.message}` : error instanceof Error ? error.message : "操作を完了できませんでした。",
+      details: apiError?.details,
+    });
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    void (async () => {
+      try {
+        const status = await client.current.status();
+        if (!active) return;
+        setInitialized(status.initialized);
+        setAuthenticated(status.authenticated);
+        setServerOffsetMs(status.serverNowMs - Date.now());
+        if (status.authenticated) applyState(await client.current.state());
+      } catch (error) {
+        if (active) showError(error);
+      } finally {
+        if (active) setBooting(false);
+      }
+    })();
+    return () => { active = false; };
+  }, [applyState, showError]);
+
+  useEffect(() => {
+    if (!authenticated || !data || mutating) return;
+    const timer = window.setInterval(() => {
+      void client.current.state().then(applyState).catch((error) => {
+        if (error instanceof ApiClientError && error.status === 401) showError(error);
+      });
+    }, 5_000);
+    return () => window.clearInterval(timer);
+  }, [applyState, authenticated, data, mutating, showError]);
 
   useEffect(() => {
     if (!notice) return;
@@ -64,67 +109,73 @@ export default function App() {
     return () => window.clearTimeout(timer);
   }, [notice]);
 
-  const commit: Commit = useCallback(
-    (recipe, successMessage) => {
+  const mutate: Mutate = useCallback(
+    async <T,>(action: Parameters<ApiClient["mutate"]>[0], payload: Parameters<ApiClient["mutate"]>[1], successMessage?: string) => {
+      if (!data || mutatingRef.current) return null;
+      mutatingRef.current = true;
+      setMutating(true);
       try {
-        const draft = structuredClone(data);
-        const result = recipe(draft);
-        const saved = repository.current.save(draft);
-        setData(saved);
+        const response = await client.current.mutate<T>(action, payload, data.system.modeEpoch);
+        applyState(response);
+        if (action === "RENAME_DEVICE" && typeof payload.name === "string") rememberDeviceName(payload.name);
         if (successMessage) setNotice({ kind: "success", message: successMessage });
-        return result;
+        return response.result;
       } catch (error) {
-        const message = isFastpassError(error)
-          ? `${error.code}: ${error.message}`
-          : error instanceof Error
-            ? error.message
-            : "操作を完了できませんでした。";
-        setNotice({
-          kind: "error",
-          message,
-          details: isFastpassError(error) ? error.details : undefined,
-        });
+        showError(error);
         return null;
+      } finally {
+        mutatingRef.current = false;
+        setMutating(false);
       }
     },
-    [data],
+    [applyState, data, showError],
   );
 
   const requestConfirmation: RequestConfirmation = useCallback((title, description, action) => {
     setConfirmation({ title, description, action });
   }, []);
 
-  const handleConfirmation = () => {
+  const handleConfirmation = async () => {
     if (!confirmation) return;
     const action = confirmation.action;
     setConfirmation(null);
-    action();
+    await action();
   };
 
-  const logout = useCallback(() => {
-    endLocalSession();
-    setAuthenticated(false);
-    setScreen("home");
-    setConfirmation(null);
-  }, []);
-
-  const restore = useCallback((raw: string) => {
+  const login = useCallback(async (password: string) => {
     try {
-      const restored = repository.current.replaceFromJson(raw);
-      setData(restored);
-      setNotice({ kind: "success", message: "ローカルバックアップを復元しました。" });
-      return true;
+      const status = await client.current.login(password);
+      setAuthenticated(status.authenticated);
+      setInitialized(status.initialized);
+      applyState(await client.current.state());
+      setNotice({ kind: "success", message: "ログインしました。" });
     } catch (error) {
-      setNotice({ kind: "error", message: error instanceof Error ? error.message : "復元できませんでした。" });
-      return false;
+      throw new Error(error instanceof ApiClientError ? error.message : "ログインできませんでした。");
     }
-  }, []);
+  }, [applyState]);
 
-  if (!authenticated) {
+  const logout = useCallback(async () => {
+    try {
+      await client.current.logout();
+    } catch (error) {
+      showError(error);
+    } finally {
+      setAuthenticated(false);
+      setData(null);
+      setScreen("home");
+      setConfirmation(null);
+    }
+  }, [showError]);
+
+  if (booting) {
+    return <main className="auth-shell"><section className="auth-card"><p className="eyebrow">D1同期運用</p><h1>接続を確認しています…</h1></section></main>;
+  }
+
+  if (!authenticated || !data) {
     return (
       <>
         {notice && <NoticeBanner notice={notice} onClose={() => setNotice(null)} />}
-        <AuthScreen onAuthenticated={() => { setAuthenticated(true); setNotice({ kind: "success", message: "ログインしました。" }); }} />
+        <AuthScreen initialized={initialized} onLogin={login} />
       </>
     );
   }
@@ -136,8 +187,8 @@ export default function App() {
   return (
     <div className={`app-shell ${modeIsDev ? "app-shell--dev" : ""}`}>
       <div className="local-edition-banner">
-        <strong>ローカル確認版</strong>
-        <span>このブラウザー内だけに保存・端末間同期なし・本番運用不可</span>
+        <strong>D1同期運用</strong>
+        <span>販売・入場・払い戻し・会計を端末間で共有</span>
       </div>
       {modeIsDev && (
         <div className="dev-mode-banner">
@@ -161,23 +212,23 @@ export default function App() {
         <div className="header-status">
           <div><span>{modeIsDev ? "開発" : "本番"}・運用回{workspace.sequence}</span><strong>{data.system.device.name}</strong></div>
           <div><span>日本時間</span><strong>{formatDateTime(nowMs).split(" ").at(-1)}</strong></div>
-          <button type="button" className="logout-button" onClick={logout}>ログアウト</button>
+          <button type="button" className="logout-button" onClick={() => void logout()}>ログアウト</button>
         </div>
       </header>
       {notice && <NoticeBanner notice={notice} onClose={() => setNotice(null)} />}
       <main className="app-main">
         {screen === "home" && <HomeScreen summary={summary} workspace={workspace} onNavigate={setScreen} />}
-        {screen === "sales" && <SalesScreen data={data} summary={summary} nowMs={nowMs} commit={commit} requestConfirmation={requestConfirmation} />}
-        {screen === "admission" && <AdmissionScreen data={data} commit={commit} requestConfirmation={requestConfirmation} />}
-        {screen === "records" && <RecordsScreen data={data} commit={commit} />}
+        {screen === "sales" && <SalesScreen data={data} summary={summary} nowMs={nowMs} mutate={mutate} requestConfirmation={requestConfirmation} />}
+        {screen === "admission" && <AdmissionScreen data={data} mutate={mutate} requestConfirmation={requestConfirmation} />}
+        {screen === "records" && <RecordsScreen data={data} mutate={mutate} />}
         {screen === "accounting" && <AccountingScreen data={data} summary={summary} />}
-        {screen === "admin" && <AdminScreen data={data} commit={commit} requestConfirmation={requestConfirmation} onRestore={restore} />}
+        {screen === "admin" && <AdminScreen data={data} mutate={mutate} requestConfirmation={requestConfirmation} />}
       </main>
       {confirmation && (
         <ConfirmationDialog
           title={confirmation.title}
           description={confirmation.description}
-          onConfirm={handleConfirmation}
+          onConfirm={() => void handleConfirmation()}
           onCancel={() => setConfirmation(null)}
         />
       )}

@@ -6,6 +6,10 @@ playwright-report/
 test-results/
 .DS_Store
 .idea/
+.wrangler/
+.dev.vars
+auth-*.sql
+wrangler.jsonc
 *.local
 .env
 .env.*
