@@ -9,14 +9,14 @@ import {
 } from "../../domain/engine";
 import { formatDateTime, formatGroupNumber, formatTicketCode, formatYen } from "../../domain/format";
 import type { FastpassData, Refund, TicketStatus } from "../../domain/types";
-import type { Commit, RequestReauth } from "../uiTypes";
+import type { Commit, RequestConfirmation } from "../uiTypes";
 
 type OperationMode = "CHECKIN" | "REFUND" | "REVERSAL";
 
 type AdmissionScreenProps = {
   data: FastpassData;
   commit: Commit;
-  requestReauth: RequestReauth;
+  requestConfirmation: RequestConfirmation;
 };
 
 const STATUS_LABELS: Record<TicketStatus, string> = {
@@ -25,7 +25,7 @@ const STATUS_LABELS: Record<TicketStatus, string> = {
   REFUNDED: "払い戻し済み",
 };
 
-export function AdmissionScreen({ data, commit, requestReauth }: AdmissionScreenProps) {
+export function AdmissionScreen({ data, commit, requestConfirmation }: AdmissionScreenProps) {
   const [mode, setMode] = useState<OperationMode>("CHECKIN");
   const [numericValue, setNumericValue] = useState("");
   const [numbers, setNumbers] = useState<number[]>([]);
@@ -97,7 +97,7 @@ export function AdmissionScreen({ data, commit, requestReauth }: AdmissionScreen
   };
 
   const confirmRefund = () => {
-    requestReauth(
+    requestConfirmation(
       "払い戻しを確定",
       `${numbers.length}枚を払い戻します。木製券の回収と返金額を確認してください。`,
       () => {
@@ -114,7 +114,7 @@ export function AdmissionScreen({ data, commit, requestReauth }: AdmissionScreen
     const item = tickets[0];
     if (!item?.ticket?.currentUseEventId) return;
     const eventId = item.ticket.currentUseEventId;
-    requestReauth(
+    requestConfirmation(
       "使用済みを取り消す",
       `${formatTicketCode(item.number)}を未使用へ戻します。履歴は削除されません。`,
       () => {
@@ -164,7 +164,7 @@ export function AdmissionScreen({ data, commit, requestReauth }: AdmissionScreen
       <div className="two-column operation-layout">
         <section className="work-panel">
           <div className="section-heading compact-heading">
-            <div><p className="eyebrow">{mode === "CHECKIN" ? "提示された券だけを登録" : "再認証が必要な操作"}</p><h2>{title}</h2></div>
+            <div><p className="eyebrow">{mode === "CHECKIN" ? "提示された券だけを登録" : "実行前に内容を確認"}</p><h2>{title}</h2></div>
             <strong className="selection-count">{numbers.length}枚</strong>
           </div>
           {numbers.length === 0 ? (

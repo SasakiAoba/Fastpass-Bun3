@@ -13,9 +13,9 @@ export function HomeScreen({ summary, workspace, onNavigate }: HomeScreenProps) 
     { label: "本日の販売", value: `${summary.soldToday}枚`, meta: summary.dailyLimit === null ? "上限なし（テスト）" : `上限 ${summary.dailyLimit}枚` },
     { label: "全体販売", value: `${summary.totalSold}枚`, meta: `払い戻し ${summary.totalRefunded}枚` },
     { label: "未使用", value: `${summary.issuedCount}枚`, meta: `使用済み ${summary.usedCount}枚` },
-    { label: "未発行", value: summary.unissuedCount === null ? "無制限" : `${summary.unissuedCount}枚`, meta: `確保中 ${summary.activeHolds}枚` },
-    { label: "純売上", value: formatYen(summary.netSalesYen), meta: `総売上 ${formatYen(summary.grossSalesYen)}` },
-    { label: "予定現金", value: formatYen(summary.expectedCashYen), meta: workspace.expensesConfirmedAtMs ? "経費確認済み" : "経費未確認" },
+    { label: "もらったお金", value: formatYen(summary.totalTenderedYen), meta: `${summary.checkoutCount}件の会計` },
+    { label: "お釣り", value: formatYen(summary.totalChangeYen), meta: "販売時の合計" },
+    { label: "最終利益", value: formatYen(summary.finalProfitYen), meta: `払戻後 ${formatYen(summary.netSalesYen)}` },
   ];
 
   return (
@@ -58,7 +58,7 @@ export function HomeScreen({ summary, workspace, onNavigate }: HomeScreenProps) 
         </div>
       </section>
       <section className="home-secondary-actions" aria-label="その他の操作">
-        <button type="button" onClick={() => onNavigate("accounting")}><strong>会計</strong><span>売上・現金・経費</span></button>
+        <button type="button" onClick={() => onNavigate("accounting")}><strong>会計</strong><span>受取・お釣り・利益</span></button>
         <button type="button" onClick={() => onNavigate("records")}><strong>記録</strong><span>券・販売・履歴</span></button>
         <button type="button" onClick={() => onNavigate("admin")}><strong>管理</strong><span>営業・テスト・リセット</span></button>
       </section>

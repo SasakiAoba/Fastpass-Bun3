@@ -189,6 +189,10 @@ export function getSummary(data: FastpassData, nowMs = Date.now()): Summary {
   const day = workspace.businessDays[dayNumber];
   const limitsEnforced = workspace.kind === "LIVE";
   const totalActiveHolds = activeHoldQuantity(data, workspace.id, nowMs);
+  const totalTenderedYen = workspaceSales.reduce((sum, sale) => sum + sale.tenderedYen, 0);
+  const totalChangeYen = workspaceSales.reduce((sum, sale) => sum + sale.changeYen, 0);
+  const finalProfitYen = totalTenderedYen - totalChangeYen;
+  const refundsYen = workspaceRefunds.reduce((sum, refund) => sum + refund.totalYen, 0);
   return {
     dayNumber,
     soldToday: day.soldCount,
@@ -212,11 +216,13 @@ export function getSummary(data: FastpassData, nowMs = Date.now()): Summary {
     unissuedCount: limitsEnforced
       ? Math.max(0, workspace.configSnapshot.MAX_TICKET_NUMBER - workspace.lastTicketNumber)
       : null,
+    checkoutCount: workspaceSales.length,
+    totalTenderedYen,
+    totalChangeYen,
+    finalProfitYen,
     grossSalesYen: workspaceSales.reduce((sum, sale) => sum + sale.totalYen, 0),
-    refundsYen: workspaceRefunds.reduce((sum, refund) => sum + refund.totalYen, 0),
-    netSalesYen:
-      workspaceSales.reduce((sum, sale) => sum + sale.totalYen, 0) -
-      workspaceRefunds.reduce((sum, refund) => sum + refund.totalYen, 0),
+    refundsYen,
+    netSalesYen: finalProfitYen - refundsYen,
     expectedCashYen: data.cashLedger
       .filter((entry) => entry.workspaceId === workspace.id)
       .reduce((sum, entry) => sum + entry.amountYen, 0),

@@ -13,57 +13,53 @@ import { downloadText, formatDateTime } from "../../domain/format";
 import type { FastpassData } from "../../domain/types";
 import {
   auditCsv,
-  cashLedgerCsv,
-  expensesCsv,
   refundsCsv,
   salesCsv,
   ticketsCsv,
   workspaceJson,
 } from "../../infrastructure/exportData";
-import type { Commit, RequestReauth } from "../uiTypes";
+import type { Commit, RequestConfirmation } from "../uiTypes";
 
 type AdminScreenProps = {
   data: FastpassData;
   commit: Commit;
-  requestReauth: RequestReauth;
+  requestConfirmation: RequestConfirmation;
   onRestore: (raw: string) => boolean;
-  onRequireLogin: () => void;
 };
 
-export function AdminScreen({ data, commit, requestReauth, onRestore, onRequireLogin }: AdminScreenProps) {
+export function AdminScreen({ data, commit, requestConfirmation, onRestore }: AdminScreenProps) {
   const workspace = getActiveWorkspace(data);
   const [deviceName, setDeviceName] = useState(data.system.device.name);
   const fileInput = useRef<HTMLInputElement>(null);
   const configErrors = validateConfig(FASTPASS_CONFIG);
   const isDev = data.system.mode === "DEVELOPMENT";
 
-  const privileged = (title: string, description: string, action: () => void) => {
-    requestReauth(title, description, action);
+  const confirmAction = (title: string, description: string, action: () => void) => {
+    requestConfirmation(title, description, action);
   };
 
   const toggleMaintenance = () => {
     const next = !data.system.maintenance;
-    privileged(next ? "営業を停止" : "営業を再開", next ? "全ての新規業務操作を停止します。記録と会計は閲覧できます。" : "現在の領域で受付操作を再開します。モードと設定を確認してください。", () => {
+    confirmAction(next ? "営業を停止" : "営業を再開", next ? "全ての新規業務操作を停止します。記録と会計は閲覧できます。" : "現在の領域で受付操作を再開します。モードと設定を確認してください。", () => {
       commit((draft) => setMaintenance(draft, next), next ? "営業を停止しました。" : "営業を再開しました。");
     });
   };
 
   const startDevelopment = () => {
-    privileged("開発者モードを開始", "すべての受付画面をテストデータ領域へ切り替えます。実物の券と現金は扱わないでください。", () => {
+    confirmAction("開発者モードを開始", "すべての受付画面をテストデータ領域へ切り替えます。実物の券と現金は扱わないでください。", () => {
       commit((draft) => enableDeveloperMode(draft), "開発者モードを開始しました。日別・総発行上限は適用されません。");
     });
   };
 
   const stopDevelopment = () => {
-    privileged("テストデータを削除", "現在のDEV領域にあるチケット、販売、入場、返金、現金、履歴を削除します。本番データは保持します。", () => {
+    confirmAction("テストデータを削除", "現在のDEV領域にあるチケット、販売、入場、返金、現金、履歴を削除します。本番データは保持します。", () => {
       commit((draft) => disableDeveloperMode(draft), "DEVデータを削除しました。本番の営業停止状態です。");
     });
   };
 
   const resetLive = () => {
-    privileged("本番運用回をリセット", "現在の本番運用回を保存し、新しい運用回を作成します。番号と会計は0から始まります。", () => {
-      const result = commit((draft) => resetLiveWorkspace(draft), "新しい本番運用回を作成しました。再ログインしてください。");
-      if (result !== null) onRequireLogin();
+    confirmAction("本番運用回をリセット", "現在の本番運用回を保存し、新しい運用回を作成します。番号と会計は0から始まります。", () => {
+      commit((draft) => resetLiveWorkspace(draft), "新しい本番運用回を作成しました。");
     });
   };
 
@@ -75,15 +71,13 @@ export function AdminScreen({ data, commit, requestReauth, onRestore, onRequireL
     commit((draft) => setDeveloperDay(draft, day), `テスト日を${day}日目に変更しました。`);
   };
 
-  const exportFile = (kind: "json" | "tickets" | "sales" | "refunds" | "cash" | "expenses" | "audit") => {
+  const exportFile = (kind: "json" | "tickets" | "sales" | "refunds" | "audit") => {
     const prefix = `fastpass-live-${workspace.sequence}-${new Date().toISOString().slice(0, 10)}`;
     const exporters = {
       json: () => workspaceJson(data, workspace.id),
       tickets: () => ticketsCsv(data, workspace.id),
       sales: () => salesCsv(data, workspace.id),
       refunds: () => refundsCsv(data, workspace.id),
-      cash: () => cashLedgerCsv(data, workspace.id),
-      expenses: () => expensesCsv(data, workspace.id),
       audit: () => auditCsv(data, workspace.id),
     };
     downloadText(`${prefix}-${kind}.${kind === "json" ? "json" : "csv"}`, exporters[kind](), kind === "json" ? "application/json" : "text/csv;charset=utf-8");
@@ -102,8 +96,8 @@ export function AdminScreen({ data, commit, requestReauth, onRestore, onRequireL
     event.target.value = "";
     if (!file) return;
     const raw = await file.text();
-    privileged("ローカルバックアップを復元", "現在の端末内業務データを、選択したJSONの内容で置き換えます。パスワードは変更されません。", () => {
-      if (onRestore(raw)) onRequireLogin();
+    confirmAction("ローカルバックアップを復元", "現在の端末内業務データを、選択したJSONの内容で置き換えます。パスワードとログイン状態は変更されません。", () => {
+      onRestore(raw);
     });
   };
 
@@ -165,8 +159,6 @@ export function AdminScreen({ data, commit, requestReauth, onRestore, onRequireL
             <button type="button" onClick={() => exportFile("tickets")}>チケットCSV</button>
             <button type="button" onClick={() => exportFile("sales")}>販売CSV</button>
             <button type="button" onClick={() => exportFile("refunds")}>払戻CSV</button>
-            <button type="button" onClick={() => exportFile("cash")}>現金CSV</button>
-            <button type="button" onClick={() => exportFile("expenses")}>経費CSV</button>
             <button type="button" onClick={() => exportFile("audit")}>操作履歴CSV</button>
           </div>
         )}

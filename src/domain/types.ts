@@ -242,6 +242,10 @@ export type Summary = {
   issuedCount: number;
   usedCount: number;
   unissuedCount: number | null;
+  checkoutCount: number;
+  totalTenderedYen: number;
+  totalChangeYen: number;
+  finalProfitYen: number;
   grossSalesYen: number;
   refundsYen: number;
   netSalesYen: number;

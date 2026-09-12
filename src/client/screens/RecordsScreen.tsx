@@ -5,7 +5,7 @@ import { formatDateTime, formatGroupNumber, formatTicketCode, formatYen } from "
 import type { FastpassData } from "../../domain/types";
 import type { Commit } from "../uiTypes";
 
-type RecordTab = "TICKETS" | "SALES" | "ENTRY" | "REFUNDS" | "CASH" | "AUDIT";
+type RecordTab = "TICKETS" | "SALES" | "ENTRY" | "REFUNDS" | "AUDIT";
 
 type RecordsScreenProps = {
   data: FastpassData;
@@ -17,7 +17,6 @@ const TABS: Array<{ id: RecordTab; label: string }> = [
   { id: "SALES", label: "販売会計" },
   { id: "ENTRY", label: "入場・取消" },
   { id: "REFUNDS", label: "払い戻し" },
-  { id: "CASH", label: "現金・経費" },
   { id: "AUDIT", label: "操作履歴" },
 ];
 
@@ -107,12 +106,6 @@ export function RecordsScreen({ data, commit }: RecordsScreenProps) {
           </article>
         ));
     }
-    if (tab === "CASH") {
-      return data.cashLedger
-        .filter((entry) => entry.workspaceId === workspace.id)
-        .sort((a, b) => b.occurredAtMs - a.occurredAtMs)
-        .map((entry) => <article className="record-card record-card--compact" key={entry.id}><div className="record-card__title"><strong>{entry.type}</strong><strong className={entry.amountYen >= 0 ? "money-positive" : "money-negative"}>{entry.amountYen >= 0 ? "+" : ""}{formatYen(entry.amountYen)}</strong></div><p>{formatDateTime(entry.occurredAtMs)}　{entry.reason ?? entry.sourceType}</p></article>);
-    }
     return data.auditLogs
       .filter((log) => log.workspaceId === workspace.id || log.workspaceId === null)
       .sort((a, b) => b.occurredAtMs - a.occurredAtMs)
@@ -135,7 +128,7 @@ export function RecordsScreen({ data, commit }: RecordsScreenProps) {
         </section>
         <aside className="side-panel">
           <div className="number-display"><span>{tab === "SALES" ? "グループ番号検索" : "チケット番号検索"}</span><strong>{tab === "SALES" ? `G-${search || "____"}` : `HC-${search || "___"}`}</strong></div>
-          {tab === "CASH" || tab === "AUDIT" ? <div className="empty-state compact-empty"><span aria-hidden="true">i</span><strong>このタブは番号検索なし</strong><p>日時の新しい順に表示します。</p></div> : <NumericKeypad value={search} onChange={(value) => { setSearch(value); setPage(0); }} onConfirm={() => setPage(0)} confirmLabel="検索" maxDigits={8} />}
+          {tab === "AUDIT" ? <div className="empty-state compact-empty"><span aria-hidden="true">i</span><strong>このタブは番号検索なし</strong><p>日時の新しい順に表示します。</p></div> : <NumericKeypad value={search} onChange={(value) => { setSearch(value); setPage(0); }} onConfirm={() => setPage(0)} confirmLabel="検索" maxDigits={8} />}
           {search && <button type="button" className="secondary-button full-button" onClick={() => { setSearch(""); setPage(0); }}>検索を解除</button>}
         </aside>
       </div>

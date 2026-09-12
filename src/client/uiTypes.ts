@@ -2,7 +2,7 @@ import type { FastpassData } from "../domain/types";
 
 export type Commit = <T>(recipe: (draft: FastpassData) => T, successMessage?: string) => T | null;
 
-export type RequestReauth = (
+export type RequestConfirmation = (
   title: string,
   description: string,
   action: () => void,

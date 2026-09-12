@@ -1110,6 +1110,7 @@ h3 {
 
 .accounting-hero .eyebrow { color: #78d6ee; }
 .accounting-hero h2 { margin: 0; }
+.accounting-hero > div:first-child > p:last-child { margin: 12px 0 0; color: #c9dce7; font-size: .82rem; line-height: 1.6; }
 
 .accounting-totals {
   display: grid;
@@ -1129,10 +1130,34 @@ h3 {
 .accounting-totals span,
 .accounting-totals small { color: #c9dce7; font-size: .7rem; }
 .accounting-totals strong { margin-top: 7px; font-size: 1.2rem; }
-.accounting-totals .unconfirmed strong { color: #ffd27d; }
+.accounting-totals .profit { border-color: rgba(255, 210, 125, .55); background: rgba(255, 210, 125, .12); }
+.accounting-totals .profit strong { color: #ffd27d; }
+
+.accounting-counts {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 14px;
+  margin-bottom: 22px;
+}
+
+.accounting-counts article {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  min-height: 88px;
+  padding: 18px 22px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: #fff;
+  box-shadow: 0 8px 22px rgba(11,38,56,.055);
+}
+
+.accounting-counts span,
+.accounting-counts small { color: var(--muted); font-size: .78rem; }
+.accounting-counts strong { color: var(--navy-900); font-size: 1.55rem; }
+.accounting-counts small { grid-column: 2; text-align: right; }
 
 .day-accounting-table,
-.expense-list-section,
 .admin-section { margin-bottom: 22px; padding: 24px; }
 
 .data-table {
@@ -1151,29 +1176,11 @@ h3 {
 }
 
 .day-table .data-table__head,
-.day-table .data-table__row { grid-template-columns: .8fr .8fr .8fr .9fr 1fr 1fr 1fr; }
+.day-table .data-table__row { grid-template-columns: .72fr .68fr .65fr .95fr .85fr .9fr 1.12fr .95fr; }
 .data-table__head { color: var(--muted); background: #eef4f7; font-size: .72rem; font-weight: 800; }
 .data-table__row { border-top: 1px solid var(--line); font-size: .8rem; }
+.day-table .total-row { color: var(--navy-900); background: #f1f7fa; }
 
-.accounting-workspace {
-  display: grid;
-  grid-template-columns: minmax(0, 1.25fr) minmax(340px, .75fr);
-  gap: 22px;
-  margin-bottom: 22px;
-  padding: 24px;
-  border: 1px solid var(--line);
-  border-radius: 20px;
-  background: #fff;
-  box-shadow: 0 8px 22px rgba(11,38,56,.065);
-}
-
-.action-choice-grid {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 8px;
-}
-
-.action-choice-grid button,
 .admin-action-grid button,
 .export-grid button {
   display: flex;
@@ -1188,17 +1195,22 @@ h3 {
   text-align: left;
 }
 
-.action-choice-grid button.active { color: #fff; border-color: var(--navy-800); background: var(--navy-800); }
-.action-choice-grid span,
 .admin-action-grid span { color: var(--muted); font-size: .7rem; }
-.action-choice-grid button.active span { color: #c8dce7; }
-.accounting-form { display: grid; grid-template-columns: repeat(2, 1fr); }
-.compact-number-display { margin-top: 12px; }
 
-.expense-columns { grid-template-columns: 1.2fr 1fr .7fr .7fr .5fr; }
-.text-button { min-height: 38px; border: 0; background: transparent; font-weight: 800; }
-.danger-text { color: var(--red-dark); }
-.empty-inline { margin: 0; padding: 18px; color: var(--muted); text-align: center; }
+.accounting-note {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(260px, 1fr));
+  gap: 12px;
+  padding: 21px 24px;
+  border: 1px solid #c5d9e3;
+  border-radius: 16px;
+  background: #edf6fa;
+}
+
+.accounting-note div { display: flex; justify-content: space-between; gap: 18px; }
+.accounting-note strong { color: var(--navy-900); }
+.accounting-note span { color: var(--muted); }
+.accounting-note p { grid-column: 1 / -1; margin: 4px 0 0; color: var(--muted); font-size: .78rem; }
 
 .admin-status-grid {
   display: grid;
@@ -1303,28 +1315,13 @@ h3 {
 
 .modal-heading { display: flex; justify-content: space-between; gap: 20px; }
 .modal-heading h2 { margin: 0; }
-.password-display { min-height: 61px; margin: 15px 0; padding: 16px; border: 2px solid #bfcfd9; border-radius: 12px; color: var(--navy-900); background: #f8fbfc; font-size: 1.2rem; font-weight: 800; letter-spacing: .18em; }
-
-.alpha-keypad {
+.confirmation-card { width: min(560px, calc(100vw - 60px)); }
+.confirmation-card > p:not(.eyebrow) { margin: 16px 0 0; color: var(--muted); line-height: 1.8; }
+.confirmation-actions {
   display: grid;
-  grid-template-columns: repeat(10, 1fr);
-  gap: 6px;
-}
-
-.alpha-keypad button {
-  min-height: 51px;
-  border: 1px solid #c6d4dc;
-  border-radius: 9px;
-  color: var(--navy-900);
-  background: #fff;
-  font-weight: 800;
-}
-
-.password-actions {
-  display: grid;
-  grid-template-columns: .8fr .8fr .8fr 1.5fr;
-  gap: 9px;
-  margin-top: 13px;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin-top: 26px;
 }
 
 @media (max-height: 760px) {
@@ -1337,7 +1334,6 @@ h3 {
   .welcome-panel { margin-bottom: 20px; padding: 22px; }
   .metric-card { min-height: 108px; padding: 13px; }
   .auth-card { padding: 30px; }
-  .alpha-keypad button { min-height: 43px; }
 }
 
 @media (min-width: 1450px) {

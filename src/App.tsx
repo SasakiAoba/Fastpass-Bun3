@@ -6,8 +6,8 @@ import { AuthScreen } from "./client/screens/AuthScreen";
 import { HomeScreen } from "./client/screens/HomeScreen";
 import { RecordsScreen } from "./client/screens/RecordsScreen";
 import { SalesScreen } from "./client/screens/SalesScreen";
-import { PasswordKeypad } from "./client/components/PasswordKeypad";
-import type { Commit, RequestReauth, ScreenName } from "./client/uiTypes";
+import { ConfirmationDialog } from "./client/components/ConfirmationDialog";
+import type { Commit, RequestConfirmation, ScreenName } from "./client/uiTypes";
 import { getActiveWorkspace, getSummary } from "./domain/engine";
 import { isFastpassError } from "./domain/errors";
 import { formatDateTime } from "./domain/format";
@@ -15,8 +15,6 @@ import type { FastpassData } from "./domain/types";
 import {
   endLocalSession,
   isLocalSessionValid,
-  touchLocalSession,
-  verifyLocalPassword,
 } from "./infrastructure/localAuth";
 import { LocalStorageRepository } from "./infrastructure/localStorageRepository";
 
@@ -26,7 +24,7 @@ type Notice = {
   details?: string[];
 };
 
-type ReauthState = {
+type ConfirmationState = {
   title: string;
   description: string;
   action: () => void;
@@ -51,39 +49,20 @@ export default function App() {
   const [notice, setNotice] = useState<Notice | null>(
     initialLoad.warning ? { kind: "warning", message: initialLoad.warning } : null,
   );
-  const [reauth, setReauth] = useState<ReauthState | null>(null);
-  const [reauthBusy, setReauthBusy] = useState(false);
-  const [reauthError, setReauthError] = useState<string | null>(null);
+  const [confirmation, setConfirmation] = useState<ConfirmationState | null>(null);
 
   useEffect(() => {
     const timer = window.setInterval(() => {
-      const current = Date.now();
-      setNowMs(current);
-      if (authenticated && !isLocalSessionValid(current)) {
-        setAuthenticated(false);
-        setScreen("home");
-        setNotice({ kind: "warning", message: "セッションの期限が切れました。もう一度ログインしてください。" });
-      }
+      setNowMs(Date.now());
     }, 1_000);
     return () => window.clearInterval(timer);
-  }, [authenticated]);
+  }, []);
 
   useEffect(() => {
     if (!notice) return;
     const timer = window.setTimeout(() => setNotice(null), notice.kind === "error" ? 8_000 : 5_000);
     return () => window.clearTimeout(timer);
   }, [notice]);
-
-  useEffect(() => {
-    if (!authenticated) return;
-    const markActivity = () => touchLocalSession();
-    window.addEventListener("pointerdown", markActivity, { passive: true });
-    window.addEventListener("keydown", markActivity);
-    return () => {
-      window.removeEventListener("pointerdown", markActivity);
-      window.removeEventListener("keydown", markActivity);
-    };
-  }, [authenticated]);
 
   const commit: Commit = useCallback(
     (recipe, successMessage) => {
@@ -92,7 +71,6 @@ export default function App() {
         const result = recipe(draft);
         const saved = repository.current.save(draft);
         setData(saved);
-        touchLocalSession();
         if (successMessage) setNotice({ kind: "success", message: successMessage });
         return result;
       } catch (error) {
@@ -112,40 +90,29 @@ export default function App() {
     [data],
   );
 
-  const requestReauth: RequestReauth = useCallback((title, description, action) => {
-    setReauthError(null);
-    setReauth({ title, description, action });
+  const requestConfirmation: RequestConfirmation = useCallback((title, description, action) => {
+    setConfirmation({ title, description, action });
   }, []);
 
-  const handleReauth = async (password: string) => {
-    if (!reauth) return;
-    setReauthBusy(true);
-    setReauthError(null);
-    try {
-      if (!(await verifyLocalPassword(password))) {
-        setReauthError("パスワードが正しくありません。");
-        return;
-      }
-      const action = reauth.action;
-      setReauth(null);
-      action();
-    } finally {
-      setReauthBusy(false);
-    }
+  const handleConfirmation = () => {
+    if (!confirmation) return;
+    const action = confirmation.action;
+    setConfirmation(null);
+    action();
   };
 
   const logout = useCallback(() => {
     endLocalSession();
     setAuthenticated(false);
     setScreen("home");
-    setReauth(null);
+    setConfirmation(null);
   }, []);
 
   const restore = useCallback((raw: string) => {
     try {
       const restored = repository.current.replaceFromJson(raw);
       setData(restored);
-      setNotice({ kind: "success", message: "ローカルバックアップを復元しました。再ログインしてください。" });
+      setNotice({ kind: "success", message: "ローカルバックアップを復元しました。" });
       return true;
     } catch (error) {
       setNotice({ kind: "error", message: error instanceof Error ? error.message : "復元できませんでした。" });
@@ -201,19 +168,17 @@ export default function App() {
       <main className="app-main">
         {screen === "home" && <HomeScreen summary={summary} workspace={workspace} onNavigate={setScreen} />}
         {screen === "sales" && <SalesScreen data={data} summary={summary} nowMs={nowMs} commit={commit} />}
-        {screen === "admission" && <AdmissionScreen data={data} commit={commit} requestReauth={requestReauth} />}
+        {screen === "admission" && <AdmissionScreen data={data} commit={commit} requestConfirmation={requestConfirmation} />}
         {screen === "records" && <RecordsScreen data={data} commit={commit} />}
-        {screen === "accounting" && <AccountingScreen data={data} summary={summary} commit={commit} requestReauth={requestReauth} />}
-        {screen === "admin" && <AdminScreen data={data} commit={commit} requestReauth={requestReauth} onRestore={restore} onRequireLogin={logout} />}
+        {screen === "accounting" && <AccountingScreen data={data} summary={summary} />}
+        {screen === "admin" && <AdminScreen data={data} commit={commit} requestConfirmation={requestConfirmation} onRestore={restore} />}
       </main>
-      {reauth && (
-        <PasswordKeypad
-          title={reauth.title}
-          description={reauth.description}
-          busy={reauthBusy}
-          error={reauthError}
-          onSubmit={handleReauth}
-          onCancel={() => { setReauth(null); setReauthError(null); }}
+      {confirmation && (
+        <ConfirmationDialog
+          title={confirmation.title}
+          description={confirmation.description}
+          onConfirm={handleConfirmation}
+          onCancel={() => setConfirmation(null)}
         />
       )}
     </div>

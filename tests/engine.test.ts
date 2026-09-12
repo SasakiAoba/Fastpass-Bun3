@@ -147,6 +147,27 @@ describe("LIVEとDEVの分離", () => {
     expect(summary.dailyLimit).toBeNull();
     expect(summary.availableToday).toBeNull();
     expect(summary.totalSold).toBe(4);
+    expect(summary.checkoutCount).toBe(1);
+    expect(summary.totalTenderedYen).toBe(500);
+    expect(summary.totalChangeYen).toBe(100);
+    expect(summary.finalProfitYen).toBe(400);
     expect(summary.netSalesYen).toBe(400);
+  });
+
+  it("預り金、お釣り、最終利益、払戻後残額を販売記録から集計する", () => {
+    const data = createDevelopmentData();
+    const first = sell(data, 2, 500, "accounting-first");
+    confirmHandover(data, "SALE", first.saleId, "accounting-first-handover");
+    sell(data, 1, 200, "accounting-second");
+    refundTickets(data, [1], "利用取りやめ", "accounting-refund");
+
+    const summary = getSummary(data);
+    expect(summary.totalSold).toBe(3);
+    expect(summary.checkoutCount).toBe(2);
+    expect(summary.totalTenderedYen).toBe(700);
+    expect(summary.totalChangeYen).toBe(400);
+    expect(summary.finalProfitYen).toBe(300);
+    expect(summary.refundsYen).toBe(100);
+    expect(summary.netSalesYen).toBe(200);
   });
 });

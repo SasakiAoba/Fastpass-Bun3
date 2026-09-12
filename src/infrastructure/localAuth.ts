@@ -1,7 +1,6 @@
-import { FASTPASS_CONFIG } from "../config/fastpass.config";
-
 const AUTH_KEY = "bun3-fastpass:local-auth:v1";
-const SESSION_KEY = "bun3-fastpass:session:v1";
+const SESSION_KEY = "bun3-fastpass:session:v2";
+const LEGACY_SESSION_KEY = "bun3-fastpass:session:v1";
 const ITERATIONS = 210_000;
 
 type AuthRecord = {
@@ -14,10 +13,8 @@ type AuthRecord = {
 };
 
 type LocalSession = {
-  version: 1;
-  issuedAtMs: number;
-  lastActivityAtMs: number;
-  absoluteExpiresAtMs: number;
+  version: 2;
+  authenticatedAtMs: number;
 };
 
 function bytesToBase64(bytes: Uint8Array): string {
@@ -121,26 +118,24 @@ export async function verifyLocalPassword(password: string): Promise<boolean> {
 
 export function beginLocalSession(nowMs = Date.now()): void {
   const session: LocalSession = {
-    version: 1,
-    issuedAtMs: nowMs,
-    lastActivityAtMs: nowMs,
-    absoluteExpiresAtMs: nowMs + FASTPASS_CONFIG.SESSION_ABSOLUTE_HOURS * 60 * 60 * 1000,
+    version: 2,
+    authenticatedAtMs: nowMs,
   };
-  sessionStorage.setItem(SESSION_KEY, JSON.stringify(session));
+  localStorage.setItem(SESSION_KEY, JSON.stringify(session));
+  sessionStorage.removeItem(LEGACY_SESSION_KEY);
 }
 
 export function endLocalSession(): void {
-  sessionStorage.removeItem(SESSION_KEY);
+  localStorage.removeItem(SESSION_KEY);
+  sessionStorage.removeItem(LEGACY_SESSION_KEY);
 }
 
-export function isLocalSessionValid(nowMs = Date.now()): boolean {
-  const raw = sessionStorage.getItem(SESSION_KEY);
+export function isLocalSessionValid(): boolean {
+  const raw = localStorage.getItem(SESSION_KEY);
   if (!raw) return false;
   try {
     const session = JSON.parse(raw) as LocalSession;
-    const idleExpiresAtMs =
-      session.lastActivityAtMs + FASTPASS_CONFIG.SESSION_IDLE_MINUTES * 60 * 1000;
-    if (session.version !== 1 || nowMs >= session.absoluteExpiresAtMs || nowMs >= idleExpiresAtMs) {
+    if (session.version !== 2 || !Number.isFinite(session.authenticatedAtMs)) {
       endLocalSession();
       return false;
     }
@@ -148,18 +143,6 @@ export function isLocalSessionValid(nowMs = Date.now()): boolean {
   } catch {
     endLocalSession();
     return false;
-  }
-}
-
-export function touchLocalSession(nowMs = Date.now()): void {
-  const raw = sessionStorage.getItem(SESSION_KEY);
-  if (!raw) return;
-  try {
-    const session = JSON.parse(raw) as LocalSession;
-    session.lastActivityAtMs = nowMs;
-    sessionStorage.setItem(SESSION_KEY, JSON.stringify(session));
-  } catch {
-    endLocalSession();
   }
 }
 
