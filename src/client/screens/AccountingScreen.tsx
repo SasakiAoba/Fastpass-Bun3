@@ -41,25 +41,20 @@ export function AccountingScreen({ data, summary }: AccountingScreenProps) {
   const workspace = getActiveWorkspace(data);
   const workspaceSales = data.sales.filter((sale) => sale.workspaceId === workspace.id);
   const workspaceRefunds = data.refunds.filter((refund) => refund.workspaceId === workspace.id);
-  const refundsById = new Map(workspaceRefunds.map((refund) => [refund.id, refund]));
+  const saleDayById = new Map(workspaceSales.map((sale) => [sale.id, sale.dayNumber]));
+  const ticketDayById = new Map(
+    data.tickets
+      .filter((ticket) => ticket.workspaceId === workspace.id)
+      .map((ticket) => [ticket.id, saleDayById.get(ticket.saleId)]),
+  );
 
   const dayRows = ([1, 2, 3] as const).map((dayNumber) => {
-    const refundIds = new Set(
-      data.cashLedger
-        .filter(
-          (entry) =>
-            entry.workspaceId === workspace.id &&
-            entry.type === "REFUND" &&
-            entry.dayNumber === dayNumber,
-        )
-        .map((entry) => entry.sourceId),
-    );
     return calculateRow(
       `${dayNumber}日目`,
       workspaceSales.filter((sale) => sale.dayNumber === dayNumber),
-      [...refundIds]
-        .map((refundId) => refundsById.get(refundId))
-        .filter((refund): refund is Refund => refund !== undefined),
+      workspaceRefunds.filter((refund) =>
+        refund.ticketIds.some((ticketId) => ticketDayById.get(ticketId) === dayNumber),
+      ),
     );
   });
 

@@ -77,6 +77,21 @@ describe("会計表示", () => {
     expect(homeFinalAmount).toHaveTextContent("100円");
     expect(homeFinalAmount).toHaveTextContent("払戻前 200円");
   });
+
+  it("D1形式で現金台帳が空でも販売日へ払い戻しを反映する", () => {
+    const data = createDevelopmentData();
+    const sale = sell(data, 2, 500, "d1-daily-accounting");
+    confirmHandover(data, "SALE", sale.saleId, "d1-daily-accounting-handover");
+    refundTickets(data, [1], "利用取りやめ", "d1-daily-accounting-refund");
+    data.cashLedger = [];
+
+    const { container } = render(<AccountingScreen data={data} summary={getSummary(data)} />);
+    const firstDay = [...container.querySelectorAll<HTMLElement>(".day-table .data-table__row")]
+      .find((row) => row.textContent?.startsWith("1日目"));
+
+    expect(firstDay).toHaveTextContent("1枚／100円");
+    expect(firstDay).toHaveTextContent("100円");
+  });
 });
 
 describe("販売直後の入場使用", () => {
