@@ -282,7 +282,6 @@ h3 {
   line-height: 1.7;
 }
 
-.local-edition-banner,
 .dev-mode-banner,
 .maintenance-banner {
   display: flex;
@@ -294,14 +293,6 @@ h3 {
   color: #fff;
   font-size: 0.76rem;
   letter-spacing: 0.02em;
-}
-
-.local-edition-banner {
-  background: var(--navy-950);
-}
-
-.local-edition-banner strong {
-  color: #ffd27d;
 }
 
 .dev-mode-banner {
@@ -317,7 +308,7 @@ h3 {
   top: 0;
   z-index: 20;
   display: grid;
-  grid-template-columns: 215px minmax(550px, 1fr) 260px;
+  grid-template-columns: 215px minmax(550px, 1fr) auto;
   align-items: center;
   min-height: 76px;
   padding: 8px 18px;
@@ -397,29 +388,10 @@ h3 {
   background: var(--blue-600);
 }
 
-.header-status {
-  display: grid;
-  grid-template-columns: 1fr auto auto;
-  align-items: center;
-  gap: 12px;
-}
-
-.header-status > div {
+.header-actions {
   display: flex;
-  flex-direction: column;
-  min-width: 0;
-}
-
-.header-status span {
-  color: var(--muted);
-  font-size: .64rem;
-}
-
-.header-status strong {
-  overflow: hidden;
-  font-size: .78rem;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  align-items: center;
+  justify-content: flex-end;
 }
 
 .logout-button,
@@ -1060,6 +1032,33 @@ h3 {
   place-items: center;
 }
 
+.maintenance-screen {
+  min-height: calc(100vh - 106px);
+}
+
+.maintenance-card {
+  width: min(660px, 100%);
+  padding: 54px 44px;
+  border: 1px solid #e5b4b8;
+  border-radius: 24px;
+  background: #fff;
+  text-align: center;
+  box-shadow: var(--shadow);
+}
+
+.maintenance-card h2 {
+  margin: 0;
+  color: #8e2a32;
+  font-size: clamp(1.9rem, 3vw, 2.6rem);
+}
+
+.maintenance-card p {
+  margin: 16px 0 0;
+  color: var(--muted);
+  font-size: 1rem;
+  line-height: 1.8;
+}
+
 .result-dialog {
   width: min(650px, 90%);
   padding: 42px;
@@ -1401,11 +1400,9 @@ h3 {
 }
 
 @media (max-width: 1100px) {
-  .app-header { grid-template-columns: 170px minmax(560px, 1fr) 210px; padding-right: 10px; padding-left: 10px; }
+  .app-header { grid-template-columns: 170px minmax(560px, 1fr) auto; padding-right: 10px; padding-left: 10px; }
   .app-identity span { display: none; }
   .main-nav button { padding-right: 9px; padding-left: 9px; font-size: .77rem; }
-  .header-status > div:first-child { display: none; }
-  .header-status { grid-template-columns: 1fr auto; }
   .screen { padding-right: 18px; padding-left: 18px; }
   .two-column { grid-template-columns: minmax(0, 56fr) minmax(350px, 44fr); gap: 14px; }
   .metric-grid { grid-template-columns: repeat(3, 1fr); }
@@ -1416,7 +1413,6 @@ h3 {
 
 @media print {
   .app-header,
-  .local-edition-banner,
   .dev-mode-banner,
   .maintenance-banner,
   .side-panel,

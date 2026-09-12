@@ -4,12 +4,12 @@ import { AdminScreen } from "./client/screens/AdminScreen";
 import { AdmissionScreen } from "./client/screens/AdmissionScreen";
 import { AuthScreen } from "./client/screens/AuthScreen";
 import { HomeScreen } from "./client/screens/HomeScreen";
+import { MaintenanceScreen } from "./client/screens/MaintenanceScreen";
 import { RecordsScreen } from "./client/screens/RecordsScreen";
 import { SalesScreen } from "./client/screens/SalesScreen";
 import { ConfirmationDialog } from "./client/components/ConfirmationDialog";
 import type { Mutate, RequestConfirmation, ScreenName } from "./client/uiTypes";
 import { getActiveWorkspace, getSummary } from "./domain/engine";
-import { formatDateTime } from "./domain/format";
 import type { FastpassData } from "./domain/types";
 import { ApiClient, ApiClientError, rememberDeviceName } from "./infrastructure/apiClient";
 
@@ -186,10 +186,6 @@ export default function App() {
 
   return (
     <div className={`app-shell ${modeIsDev ? "app-shell--dev" : ""}`}>
-      <div className="local-edition-banner">
-        <strong>D1同期運用</strong>
-        <span>販売・入場・払い戻し・会計を端末間で共有</span>
-      </div>
       {modeIsDev && (
         <div className="dev-mode-banner">
           <strong>開発者モード — テストデータ</strong>
@@ -209,17 +205,19 @@ export default function App() {
             </button>
           ))}
         </nav>
-        <div className="header-status">
-          <div><span>{modeIsDev ? "開発" : "本番"}・運用回{workspace.sequence}</span><strong>{data.system.device.name}</strong></div>
-          <div><span>日本時間</span><strong>{formatDateTime(nowMs).split(" ").at(-1)}</strong></div>
+        <div className="header-actions">
           <button type="button" className="logout-button" onClick={() => void logout()}>ログアウト</button>
         </div>
       </header>
       {notice && <NoticeBanner notice={notice} onClose={() => setNotice(null)} />}
       <main className="app-main">
         {screen === "home" && <HomeScreen summary={summary} workspace={workspace} onNavigate={setScreen} />}
-        {screen === "sales" && <SalesScreen data={data} summary={summary} nowMs={nowMs} mutate={mutate} requestConfirmation={requestConfirmation} />}
-        {screen === "admission" && <AdmissionScreen data={data} mutate={mutate} requestConfirmation={requestConfirmation} />}
+        {screen === "sales" && (data.system.maintenance
+          ? <MaintenanceScreen />
+          : <SalesScreen data={data} summary={summary} nowMs={nowMs} mutate={mutate} requestConfirmation={requestConfirmation} />)}
+        {screen === "admission" && (data.system.maintenance
+          ? <MaintenanceScreen />
+          : <AdmissionScreen data={data} mutate={mutate} requestConfirmation={requestConfirmation} />)}
         {screen === "records" && <RecordsScreen data={data} mutate={mutate} />}
         {screen === "accounting" && <AccountingScreen data={data} summary={summary} />}
         {screen === "admin" && <AdminScreen data={data} mutate={mutate} requestConfirmation={requestConfirmation} />}
