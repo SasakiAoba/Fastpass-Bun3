@@ -49,6 +49,7 @@ export function AdmissionScreen({ data, mutate, requestConfirmation }: Admission
     setNumbers([]);
     setRecovered(false);
     setRefundResult(null);
+    setSelectionError(null);
     setReason(nextMode === "REFUND" ? "購入間違い" : "誤入力");
   };
 
