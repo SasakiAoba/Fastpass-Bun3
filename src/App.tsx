@@ -176,7 +176,7 @@ export default function App() {
   }, [showError]);
 
   if (booting) {
-    return <main className="auth-shell"><section className="auth-card"><p className="eyebrow">D1同期運用</p><h1>接続を確認しています…</h1></section></main>;
+    return <main className="auth-shell"><section className="auth-card"><h1>接続を確認しています…</h1></section></main>;
   }
 
   if (!authenticated || !data) {

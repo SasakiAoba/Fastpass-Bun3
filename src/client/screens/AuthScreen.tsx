@@ -31,10 +31,6 @@ export function AuthScreen({ initialized, onLogin }: AuthScreenProps) {
         <p className="eyebrow">文化祭カジノ企画</p>
         <h1>ファストパス管理</h1>
         <p className="auth-lead">木製チケットの販売から入場、払い戻し、会計までを一つの画面で管理します。</p>
-        <div className="local-warning">
-          <strong>D1同期運用</strong>
-          <span>Mac・iPad間で販売、入場、払い戻し、会計の状態を共有します。</span>
-        </div>
       </section>
       <section className="auth-card" aria-labelledby="auth-title">
         <p className="eyebrow">ログイン</p>
