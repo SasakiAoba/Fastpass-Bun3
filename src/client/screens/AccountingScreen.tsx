@@ -76,8 +76,8 @@ export function AccountingScreen({ data, summary }: AccountingScreenProps) {
         <div className="accounting-totals">
           <article><span>もらったお金</span><strong>{formatYen(summary.totalTenderedYen)}</strong></article>
           <article><span>お釣り</span><strong>{formatYen(summary.totalChangeYen)}</strong></article>
-          <article className="profit"><span>最終利益</span><strong>{formatYen(summary.finalProfitYen)}</strong><small>もらったお金 − お釣り</small></article>
-          <article><span>払戻後残額</span><strong>{formatYen(summary.netSalesYen)}</strong><small>最終利益 − 払い戻し</small></article>
+          <article><span>売上金額（払戻前）</span><strong>{formatYen(summary.finalProfitYen)}</strong><small>もらったお金 − お釣り</small></article>
+          <article className="profit"><span>最終金額</span><strong>{formatYen(summary.netSalesYen)}</strong><small>売上金額 − 払い戻し</small></article>
         </div>
       </section>
 
@@ -94,7 +94,7 @@ export function AccountingScreen({ data, summary }: AccountingScreenProps) {
         </div>
         <div className="data-table day-table">
           <div className="data-table__head">
-            <span>対象</span><span>販売枚数</span><span>会計件数</span><span>もらったお金</span><span>お釣り</span><span>最終利益</span><span>払い戻し</span><span>払戻後残額</span>
+            <span>対象</span><span>販売枚数</span><span>会計件数</span><span>もらったお金</span><span>お釣り</span><span>売上金額</span><span>払い戻し</span><span>最終金額</span>
           </div>
           {[...dayRows, overall].map((row) => (
             <div className={`data-table__row ${row.label === "全期間" ? "total-row" : ""}`} key={row.label}>
@@ -112,8 +112,8 @@ export function AccountingScreen({ data, summary }: AccountingScreenProps) {
       </section>
 
       <section className="accounting-note" aria-label="計算方法">
-        <div><strong>最終利益</strong><span>もらったお金 − お釣り</span></div>
-        <div><strong>払戻後残額</strong><span>最終利益 − 払い戻し金額</span></div>
+        <div><strong>売上金額（払戻前）</strong><span>もらったお金 − お釣り</span></div>
+        <div><strong>最終金額</strong><span>売上金額 − 払い戻し金額</span></div>
         <p>経費、釣銭準備金、現金補充、売上金回収、現金実査はこの画面では扱いません。</p>
       </section>
     </div>

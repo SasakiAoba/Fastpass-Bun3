@@ -591,6 +591,36 @@ h3 {
   gap: 9px;
 }
 
+.keypad-panel {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.sales-keypad-panel .numeric-keypad {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.sales-keypad-panel .keypad-grid {
+  flex: 1;
+  grid-template-rows: repeat(4, minmax(56px, 1fr));
+  min-height: 0;
+}
+
+.sales-keypad-panel .keypad-key {
+  height: 100%;
+  min-height: 56px;
+  font-size: clamp(1.4rem, 2.6vh, 1.85rem);
+}
+
+.sales-keypad-panel .keypad-confirm,
+.sales-keypad-panel .keypad-exact {
+  flex: 0 0 auto;
+}
+
 .keypad-key {
   min-height: 66px;
   border: 1px solid #c7d5dd;
@@ -626,6 +656,22 @@ h3 {
   width: calc(100% - 56px);
   min-height: 66px;
   font-size: 1.05rem;
+}
+
+.result-summary {
+  padding-bottom: 176px;
+}
+
+.result-actions {
+  display: grid;
+  gap: 10px;
+  min-height: 0;
+}
+
+.result-actions .primary-button,
+.result-actions .secondary-button {
+  width: 100%;
+  min-height: 58px;
 }
 
 .cart-table {
@@ -759,6 +805,7 @@ h3 {
   gap: 10px;
   max-height: calc(100vh - 270px);
   overflow-y: auto;
+  overscroll-behavior: contain;
   padding-right: 7px;
 }
 
@@ -905,6 +952,10 @@ h3 {
   min-height: calc(100vh - 230px);
 }
 
+.operation-work-panel {
+  overflow: hidden;
+}
+
 .empty-state {
   display: flex;
   flex-direction: column;
@@ -939,6 +990,14 @@ h3 {
   max-height: calc(100vh - 390px);
   overflow-y: auto;
   padding-right: 6px;
+}
+
+.operation-layout--checkin .selected-ticket-list {
+  height: 300px;
+  max-height: 300px;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  -webkit-overflow-scrolling: touch;
 }
 
 .selected-ticket-list article {

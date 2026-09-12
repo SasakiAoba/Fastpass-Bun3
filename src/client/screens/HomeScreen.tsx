@@ -15,7 +15,7 @@ export function HomeScreen({ summary, workspace, onNavigate }: HomeScreenProps) 
     { label: "未使用", value: `${summary.issuedCount}枚`, meta: `使用済み ${summary.usedCount}枚` },
     { label: "もらったお金", value: formatYen(summary.totalTenderedYen), meta: `${summary.checkoutCount}件の会計` },
     { label: "お釣り", value: formatYen(summary.totalChangeYen), meta: "販売時の合計" },
-    { label: "最終利益", value: formatYen(summary.finalProfitYen), meta: `払戻後 ${formatYen(summary.netSalesYen)}` },
+    { label: "最終金額", value: formatYen(summary.netSalesYen), meta: `払戻前 ${formatYen(summary.finalProfitYen)}` },
   ];
 
   return (
@@ -58,7 +58,7 @@ export function HomeScreen({ summary, workspace, onNavigate }: HomeScreenProps) 
         </div>
       </section>
       <section className="home-secondary-actions" aria-label="その他の操作">
-        <button type="button" onClick={() => onNavigate("accounting")}><strong>会計</strong><span>受取・お釣り・利益</span></button>
+        <button type="button" onClick={() => onNavigate("accounting")}><strong>会計</strong><span>受取・お釣り・最終金額</span></button>
         <button type="button" onClick={() => onNavigate("records")}><strong>記録</strong><span>券・販売・履歴</span></button>
         <button type="button" onClick={() => onNavigate("admin")}><strong>管理</strong><span>営業・テスト・リセット</span></button>
       </section>

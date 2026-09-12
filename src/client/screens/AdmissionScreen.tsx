@@ -161,8 +161,8 @@ export function AdmissionScreen({ data, commit, requestConfirmation }: Admission
         <button type="button" role="tab" aria-selected={mode === "REVERSAL"} className={mode === "REVERSAL" ? "active" : ""} onClick={() => switchMode("REVERSAL")}>使用取消</button>
         <button type="button" role="tab" aria-selected={mode === "REFUND"} className={mode === "REFUND" ? "active" : ""} onClick={() => switchMode("REFUND")}>払い戻し</button>
       </div>
-      <div className="two-column operation-layout">
-        <section className="work-panel">
+      <div className={`two-column operation-layout operation-layout--${mode.toLowerCase()}`}>
+        <section className="work-panel operation-work-panel">
           <div className="section-heading compact-heading">
             <div><p className="eyebrow">{mode === "CHECKIN" ? "提示された券だけを登録" : "実行前に内容を確認"}</p><h2>{title}</h2></div>
             <strong className="selection-count">{numbers.length}枚</strong>
@@ -205,7 +205,7 @@ export function AdmissionScreen({ data, commit, requestConfirmation }: Admission
             {mode === "CHECKIN" ? `${numbers.length}枚を入場確定` : mode === "REFUND" ? `${numbers.length}枚の払い戻し確認へ` : "使用済みを取り消す"}
           </button>
         </section>
-        <aside className="side-panel">
+        <aside className="side-panel keypad-panel">
           <div className="number-display"><span>番号入力</span><strong>HC-{numericValue || "___"}</strong></div>
           <NumericKeypad value={numericValue} onChange={setNumericValue} onConfirm={addNumber} confirmLabel="番号を一覧へ追加" maxDigits={8} />
         </aside>

@@ -167,7 +167,7 @@ export default function App() {
       {notice && <NoticeBanner notice={notice} onClose={() => setNotice(null)} />}
       <main className="app-main">
         {screen === "home" && <HomeScreen summary={summary} workspace={workspace} onNavigate={setScreen} />}
-        {screen === "sales" && <SalesScreen data={data} summary={summary} nowMs={nowMs} commit={commit} />}
+        {screen === "sales" && <SalesScreen data={data} summary={summary} nowMs={nowMs} commit={commit} requestConfirmation={requestConfirmation} />}
         {screen === "admission" && <AdmissionScreen data={data} commit={commit} requestConfirmation={requestConfirmation} />}
         {screen === "records" && <RecordsScreen data={data} commit={commit} />}
         {screen === "accounting" && <AccountingScreen data={data} summary={summary} />}

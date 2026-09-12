@@ -154,7 +154,7 @@ describe("LIVEとDEVの分離", () => {
     expect(summary.netSalesYen).toBe(400);
   });
 
-  it("預り金、お釣り、最終利益、払戻後残額を販売記録から集計する", () => {
+  it("預り金、お釣り、払戻前売上、払い戻し控除後の最終金額を販売記録から集計する", () => {
     const data = createDevelopmentData();
     const first = sell(data, 2, 500, "accounting-first");
     confirmHandover(data, "SALE", first.saleId, "accounting-first-handover");

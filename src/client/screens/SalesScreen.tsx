@@ -1,18 +1,25 @@
 import { useEffect, useMemo, useState } from "react";
 import { NumericKeypad } from "../components/NumericKeypad";
-import { cancelCheckout, confirmHandover, createCheckout, finalizeSale } from "../../domain/engine";
+import {
+  cancelCheckout,
+  checkInTickets,
+  confirmHandover,
+  createCheckout,
+  finalizeSale,
+} from "../../domain/engine";
 import { formatGroupNumber, formatTicketCode, formatYen } from "../../domain/format";
 import type { Checkout, FastpassData, SaleResult, Summary } from "../../domain/types";
-import type { Commit } from "../uiTypes";
+import type { Commit, RequestConfirmation } from "../uiTypes";
 
 type SalesScreenProps = {
   data: FastpassData;
   summary: Summary;
   nowMs: number;
   commit: Commit;
+  requestConfirmation: RequestConfirmation;
 };
 
-export function SalesScreen({ data, summary, nowMs, commit }: SalesScreenProps) {
+export function SalesScreen({ data, summary, nowMs, commit, requestConfirmation }: SalesScreenProps) {
   const [cartQuantity, setCartQuantity] = useState(0);
   const [numericValue, setNumericValue] = useState("");
   const [checkout, setCheckout] = useState<Checkout | null>(null);
@@ -77,18 +84,39 @@ export function SalesScreen({ data, summary, nowMs, commit }: SalesScreenProps) 
     }
   };
 
+  const resetSale = () => {
+    setResult(null);
+    setCheckout(null);
+    setCartQuantity(0);
+    setNumericValue("");
+  };
+
   const completeHandover = () => {
     if (!result) return;
     const confirmed = commit(
       (draft) => confirmHandover(draft, "SALE", result.saleId, crypto.randomUUID()),
       "受渡しを確認しました。次の会計を開始できます。",
     );
-    if (confirmed !== null) {
-      setResult(null);
-      setCheckout(null);
-      setCartQuantity(0);
-      setNumericValue("");
-    }
+    if (confirmed !== null) resetSale();
+  };
+
+  const completeHandoverAndCheckIn = () => {
+    if (!result) return;
+    const currentResult = result;
+    requestConfirmation(
+      "このまま入場使用",
+      `今回販売した${currentResult.ticketNumbers.length}枚すべてを使用済みにします。実際に入場させることを確認してください。`,
+      () => {
+        const admission = commit(
+          (draft) => {
+            confirmHandover(draft, "SALE", currentResult.saleId, crypto.randomUUID());
+            return checkInTickets(draft, currentResult.ticketNumbers, crypto.randomUUID());
+          },
+          `${currentResult.ticketNumbers.length}枚の受渡しと入場使用を確定しました。`,
+        );
+        if (admission) resetSale();
+      },
+    );
   };
 
   if (result) {
@@ -103,7 +131,12 @@ export function SalesScreen({ data, summary, nowMs, commit }: SalesScreenProps) 
             <div className="change-row"><dt>おつり</dt><dd>{formatYen(result.changeYen)}</dd></div>
           </dl>
           <div className="alert alert--warning">画面と実物を照合し、すべての券と釣銭を渡してから確認してください。</div>
-          <button type="button" className="primary-button fixed-action" onClick={completeHandover}>受渡しを確認して次の会計へ</button>
+          <div className="result-actions fixed-action">
+            <button type="button" className="secondary-button" onClick={completeHandoverAndCheckIn}>
+              このまま入場使用（{result.ticketNumbers.length}枚）
+            </button>
+            <button type="button" className="primary-button" onClick={completeHandover}>受渡しを確認して次の会計へ</button>
+          </div>
         </section>
         <aside className="side-panel issued-list">
           <p className="eyebrow">お渡しするチケット</p>
@@ -154,7 +187,7 @@ export function SalesScreen({ data, summary, nowMs, commit }: SalesScreenProps) 
           </>
         )}
       </section>
-      <aside className="side-panel">
+      <aside className="side-panel keypad-panel sales-keypad-panel">
         <div className="number-display" aria-live="polite">
           <span>{checkout ? "お預り" : "追加する人数"}</span>
           <strong>{numericValue || "0"}{checkout ? "円" : "人"}</strong>

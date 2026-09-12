@@ -28,7 +28,10 @@ export function NumericKeypad({
   };
 
   return (
-    <div className="numeric-keypad" aria-label="数字入力キーパッド">
+    <div
+      className={`numeric-keypad${quickExactValue !== undefined ? " numeric-keypad--with-exact" : ""}`}
+      aria-label="数字入力キーパッド"
+    >
       <div className="keypad-grid">
         {KEYS.map((key) => (
           <button key={key} type="button" className="keypad-key" onClick={() => append(key)} disabled={disabled}>
