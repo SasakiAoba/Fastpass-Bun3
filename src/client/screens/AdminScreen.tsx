@@ -16,7 +16,7 @@ export function AdminScreen({ data, mutate, requestConfirmation }: AdminScreenPr
   const workspace = getActiveWorkspace(data);
   const [deviceName, setDeviceName] = useState(data.system.device.name);
   const isDev = data.system.mode === "DEVELOPMENT";
-  const eventDates = ([1, 2, 3] as const).map((day) => workspace.businessDays[day].eventDate);
+  const eventDates = ([1, 2, 3] as const).map((day) => workspace.configSnapshot.EVENT_DATES[day]);
   const eventDateLabel = eventDates.every((date): date is string => date !== null)
     ? eventDates.map((date) => {
       const [year, month, day] = date.split("-").map(Number);
