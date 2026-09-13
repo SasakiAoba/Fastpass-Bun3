@@ -170,7 +170,6 @@ export default function App() {
     } catch (error) {
       throw new Error(error instanceof ApiClientError ? error.message : "ログインできませんでした。");
     }
-    setAuthenticated(status.authenticated);
     setInitialized(status.initialized);
     setDataLoadError(null);
     try {
@@ -178,6 +177,8 @@ export default function App() {
       if (!autoStartError) setNotice({ kind: "success", message: "ログインしました。" });
     } catch (error) {
       setDataLoadError(error instanceof Error ? error.message : "ログイン後のデータを読み込めませんでした。");
+    } finally {
+      setAuthenticated(status.authenticated);
     }
   }, [loadAuthenticatedState]);
 
