@@ -16,8 +16,9 @@ export type FastpassConfig = {
   ALLOW_DEVELOPER_MODE: boolean;
 };
 
-// 本番移行時は false に変更してデプロイした後、既存DEV領域を管理画面から終了する。
-export const AUTO_START_DEVELOPER_MODE = true;
+// Pages Functions もこの設定を読むため、既定値は安全側の false に固定する。
+// ブラウザ側のPreview自動開始はViteのビルド時定義で有効化する。
+export const AUTO_START_DEVELOPER_MODE = false;
 
 export const FASTPASS_CONFIG = {
   TICKET_PREFIX: "HC-",

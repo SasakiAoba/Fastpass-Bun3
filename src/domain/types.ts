@@ -22,6 +22,7 @@ export type Device = {
 };
 
 export type SystemState = {
+  environment?: "production" | "preview";
   mode: SystemMode;
   modeEpoch: number;
   maintenance: boolean;

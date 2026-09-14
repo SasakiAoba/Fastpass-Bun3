@@ -4,6 +4,7 @@ import type { SessionContext } from "./auth";
 import { ApiError, getJstDateString, isUuid, requireInteger, requireText, sha256Hex } from "./http";
 
 type ActiveContext = {
+  scope: SessionContext["scope"];
   mode: "LIVE" | "DEVELOPMENT";
   modeEpoch: number;
   maintenance: boolean;
@@ -25,9 +26,9 @@ type ActiveContext = {
   ticketPrefix: string;
 };
 
-type OperationResult = { workspace_id: string; request_hash: string; result_json: string };
+type OperationResult = { environment: string; workspace_id: string; request_hash: string; result_json: string };
 
-async function activeContext(db: D1Database): Promise<ActiveContext> {
+async function activeContext(db: D1Database, scope: SessionContext["scope"]): Promise<ActiveContext> {
   const row = await db.prepare(
     `SELECT s.mode, s.mode_epoch, s.maintenance, s.current_live_workspace_id, s.current_dev_workspace_id,
             w.id AS workspace_id, w.kind, w.sequence, w.selected_test_day, w.unit_price_yen,
@@ -35,7 +36,7 @@ async function activeContext(db: D1Database): Promise<ActiveContext> {
             w.last_ticket_number, w.last_group_number, w.config_revision, w.config_snapshot_json, w.ticket_prefix
        FROM system_state AS s
        JOIN workspaces AS w ON w.id = CASE WHEN s.mode = 'DEVELOPMENT' THEN s.current_dev_workspace_id ELSE s.current_live_workspace_id END
-      WHERE s.singleton_id = 1 AND w.status = 'ACTIVE'`,
+      WHERE s.singleton_id = ${scope.id} AND w.environment = '${scope.key}' AND w.status = 'ACTIVE'`,
   ).first<{
     mode: "LIVE" | "DEVELOPMENT"; mode_epoch: number; maintenance: number;
     current_live_workspace_id: string; current_dev_workspace_id: string | null; workspace_id: string;
@@ -46,7 +47,7 @@ async function activeContext(db: D1Database): Promise<ActiveContext> {
   }>();
   if (!row) throw new ApiError(503, "INVALID_SYSTEM_STATE", "有効なD1運用領域を確認できません。");
   return {
-    mode: row.mode, modeEpoch: row.mode_epoch, maintenance: row.maintenance === 1,
+    scope, mode: row.mode, modeEpoch: row.mode_epoch, maintenance: row.maintenance === 1,
     liveWorkspaceId: row.current_live_workspace_id, devWorkspaceId: row.current_dev_workspace_id,
     workspaceId: row.workspace_id, kind: row.kind, sequence: row.sequence,
     selectedTestDay: row.selected_test_day, unitPriceYen: row.unit_price_yen,
@@ -69,22 +70,27 @@ function assertion(db: D1Database, context: ActiveContext, requestId: string, ke
 
 function operation(db: D1Database, workspaceId: string, requestId: string, action: string, requestHash: string, result: unknown, nowMs: number): D1PreparedStatement {
   return db.prepare(
-    "INSERT INTO business_operations (workspace_id, request_id, type, request_hash, result_json, committed_at_ms) VALUES (?, ?, ?, ?, ?, ?)",
-  ).bind(workspaceId, requestId, action, requestHash, JSON.stringify(result), nowMs);
+    "INSERT INTO business_operations (workspace_id, request_id, type, request_hash, result_json, committed_at_ms, environment) SELECT ?, ?, ?, ?, ?, ?, environment FROM workspaces WHERE id = ?",
+  ).bind(workspaceId, requestId, action, requestHash, JSON.stringify(result), nowMs, workspaceId);
 }
 
 function audit(db: D1Database, session: SessionContext, workspaceId: string | null, requestId: string, type: string, detail: string, nowMs: number): D1PreparedStatement {
   return db.prepare(
-    "INSERT INTO audit_logs (id, workspace_id, device_id, session_id, operation_id, type, status, detail, occurred_at_ms) VALUES (?, ?, ?, ?, ?, ?, 'SUCCESS', ?, ?)",
-  ).bind(crypto.randomUUID(), workspaceId, session.deviceId, session.id, requestId, type, detail, nowMs);
+    "INSERT INTO audit_logs (id, workspace_id, device_id, session_id, operation_id, type, status, detail, occurred_at_ms, environment) VALUES (?, ?, ?, ?, ?, ?, 'SUCCESS', ?, ?, ?)",
+  ).bind(crypto.randomUUID(), workspaceId, session.deviceId, session.id, requestId, type, detail, nowMs, session.scope.key);
 }
 
-async function existing(db: D1Database, requestId: string, requestHash: string): Promise<unknown | null> {
+async function existing(db: D1Database, scope: SessionContext["scope"], requestId: string, requestHash: string): Promise<unknown | null> {
   const result = await db.prepare(
-    "SELECT workspace_id, request_hash, result_json FROM business_operations WHERE request_id = ? ORDER BY committed_at_ms DESC LIMIT 2",
+    "SELECT o.workspace_id, o.request_hash, o.result_json, w.environment FROM business_operations o JOIN workspaces w ON w.id = o.workspace_id WHERE o.request_id = ? ORDER BY o.committed_at_ms DESC LIMIT 2",
   ).bind(requestId).all<OperationResult>();
-  if (result.results.length === 0) return null;
+  if (result.results.length === 0) {
+    const purged = await db.prepare("SELECT 1 AS found FROM purged_operation_receipts WHERE request_id = ?").bind(requestId).first();
+    if (purged) throw new ApiError(409, "OPERATION_PURGED", "この操作は終了済みのテスト領域に属するため、再実行できません。");
+    return null;
+  }
   const row = result.results[0];
+  if (row.environment !== scope.key) throw new ApiError(409, "IDEMPOTENCY_CONFLICT", "この操作IDは別の環境で使われています。");
   if (row.request_hash !== requestHash) {
     throw new ApiError(409, "IDEMPOTENCY_CONFLICT", "同じ操作IDが異なる内容で使われています。");
   }
@@ -133,7 +139,7 @@ async function createCheckout(db: D1Database, session: SessionContext, context: 
   await db.batch([
     db.prepare(`INSERT INTO checkouts (workspace_id, id, request_id, day_number, quantity, unit_price_yen, status, created_at_ms, expires_at_ms, device_id)
       SELECT ?, ?, ?, ?, ?, w.unit_price_yen, 'HELD', ?, ?, ? FROM workspaces AS w
-      JOIN system_state AS s ON s.singleton_id = 1
+      JOIN system_state AS s ON s.singleton_id = ${context.scope.id}
       JOIN business_days AS d ON d.workspace_id = w.id AND d.day_number = ?
       WHERE w.id = ? AND w.status = 'ACTIVE' AND s.mode = ? AND s.mode_epoch = ? AND s.maintenance = 0
         AND (w.kind = 'DEV' OR (
@@ -155,7 +161,7 @@ async function cancelCheckout(db: D1Database, session: SessionContext, context: 
   await db.batch([
     db.prepare(`UPDATE checkouts SET status = 'CANCELLED'
       WHERE workspace_id = ? AND id = ? AND status = 'HELD'
-        AND EXISTS (SELECT 1 FROM system_state WHERE singleton_id = 1 AND mode = ? AND mode_epoch = ?)`).bind(
+        AND EXISTS (SELECT 1 FROM system_state WHERE singleton_id = ${context.scope.id} AND mode = ? AND mode_epoch = ?)`).bind(
       context.workspaceId, checkoutId, activeMode(context), request.modeEpoch,
     ),
     assertion(db, context, request.requestId, "checkout-cancelled", 1, nowMs),
@@ -183,7 +189,7 @@ async function sellTickets(db: D1Database, session: SessionContext, context: Act
   await db.batch([
     db.prepare(`INSERT INTO checkouts (workspace_id, id, request_id, day_number, quantity, unit_price_yen, status, created_at_ms, expires_at_ms, device_id)
       SELECT ?, ?, ?, ?, ?, w.unit_price_yen, 'COMPLETED', ?, ?, ? FROM workspaces AS w
-      JOIN system_state AS s ON s.singleton_id = 1
+      JOIN system_state AS s ON s.singleton_id = ${context.scope.id}
       JOIN business_days AS d ON d.workspace_id = w.id AND d.day_number = ?
       WHERE w.id = ? AND w.status = 'ACTIVE' AND s.mode = ? AND s.mode_epoch = ? AND s.maintenance = 0
         AND (w.kind = 'DEV' OR (
@@ -214,18 +220,18 @@ async function sellTickets(db: D1Database, session: SessionContext, context: Act
       SELECT ?, json_extract(value, '$.eventId'), json_extract(value, '$.ticketId'), 'SALE', 'UNISSUED', 'ISSUED', ?, ?, ?, NULL, NULL FROM json_each(?)`).bind(
       context.workspaceId, nowMs, session.deviceId, request.requestId, itemJson,
     ),
-    db.prepare(`INSERT INTO business_operations (workspace_id, request_id, type, request_hash, result_json, committed_at_ms)
+    db.prepare(`INSERT INTO business_operations (workspace_id, request_id, type, request_hash, result_json, committed_at_ms, environment)
       SELECT ?, ?, ?, ?, json_object(
         'saleId', ?, 'checkoutId', ?, 'groupNumber', s.group_number,
         'ticketNumbers', json((SELECT json_group_array(serial_number) FROM (SELECT serial_number FROM tickets WHERE workspace_id = ? AND sale_id = ? ORDER BY serial_number))),
-        'totalYen', ?, 'tenderedYen', ?, 'changeYen', 0, 'purchasedAtMs', ?), ?
+        'totalYen', ?, 'tenderedYen', ?, 'changeYen', 0, 'purchasedAtMs', ?), ?, ?
       FROM sales AS s WHERE s.workspace_id = ? AND s.id = ?`).bind(
       context.workspaceId, request.requestId, request.action, hash, saleId, checkoutId, context.workspaceId, saleId,
-      totalYen, totalYen, nowMs, nowMs, context.workspaceId, saleId,
+      totalYen, totalYen, nowMs, nowMs, context.scope.key, context.workspaceId, saleId,
     ),
     audit(db, session, context.workspaceId, request.requestId, "SALE_COMMITTED", `${quantity}枚を販売し発番しました。`, nowMs),
   ]);
-  const saved = await existing(db, request.requestId, hash);
+  const saved = await existing(db, session.scope, request.requestId, hash);
   return saved || initialResult;
 }
 
@@ -247,7 +253,7 @@ async function finalizeSale(db: D1Database, session: SessionContext, context: Ac
   const initialResult = { saleId, checkoutId, groupNumber: 0, ticketNumbers: [] as number[], totalYen, tenderedYen, changeYen: tenderedYen - totalYen, purchasedAtMs: nowMs };
   await db.batch([
     db.prepare(`UPDATE checkouts SET status = 'COMPLETED' WHERE workspace_id = ? AND id = ? AND status = 'HELD' AND expires_at_ms > ?
-      AND EXISTS (SELECT 1 FROM system_state WHERE singleton_id = 1 AND mode = ? AND mode_epoch = ? AND maintenance = 0)`).bind(
+      AND EXISTS (SELECT 1 FROM system_state WHERE singleton_id = ${context.scope.id} AND mode = ? AND mode_epoch = ? AND maintenance = 0)`).bind(
       context.workspaceId, checkoutId, nowMs, activeMode(context), request.modeEpoch,
     ),
     assertion(db, context, request.requestId, "checkout-completed", 1, nowMs),
@@ -271,18 +277,18 @@ async function finalizeSale(db: D1Database, session: SessionContext, context: Ac
       SELECT ?, json_extract(value, '$.eventId'), json_extract(value, '$.ticketId'), 'SALE', 'UNISSUED', 'ISSUED', ?, ?, ?, NULL, NULL FROM json_each(?)`).bind(
       context.workspaceId, nowMs, session.deviceId, request.requestId, itemJson,
     ),
-    db.prepare(`INSERT INTO business_operations (workspace_id, request_id, type, request_hash, result_json, committed_at_ms)
+    db.prepare(`INSERT INTO business_operations (workspace_id, request_id, type, request_hash, result_json, committed_at_ms, environment)
       SELECT ?, ?, ?, ?, json_object(
         'saleId', ?, 'checkoutId', ?, 'groupNumber', s.group_number,
         'ticketNumbers', json((SELECT json_group_array(serial_number) FROM (SELECT serial_number FROM tickets WHERE workspace_id = ? AND sale_id = ? ORDER BY serial_number))),
-        'totalYen', ?, 'tenderedYen', ?, 'changeYen', ?, 'purchasedAtMs', ?), ?
+        'totalYen', ?, 'tenderedYen', ?, 'changeYen', ?, 'purchasedAtMs', ?), ?, ?
       FROM sales AS s WHERE s.workspace_id = ? AND s.id = ?`).bind(
       context.workspaceId, request.requestId, request.action, hash, saleId, checkoutId, context.workspaceId, saleId,
-      totalYen, tenderedYen, tenderedYen - totalYen, nowMs, nowMs, context.workspaceId, saleId,
+      totalYen, tenderedYen, tenderedYen - totalYen, nowMs, nowMs, context.scope.key, context.workspaceId, saleId,
     ),
     audit(db, session, context.workspaceId, request.requestId, "SALE_COMMITTED", `${checkout.quantity}枚を販売確定しました。`, nowMs),
   ]);
-  const saved = await existing(db, request.requestId, hash);
+  const saved = await existing(db, session.scope, request.requestId, hash);
   return saved || initialResult;
 }
 
@@ -320,7 +326,7 @@ async function checkin(db: D1Database, session: SessionContext, context: ActiveC
   const statements: D1PreparedStatement[] = [];
   if (saleId) {
     statements.push(db.prepare(`UPDATE sales SET handover_confirmed_at_ms = COALESCE(handover_confirmed_at_ms, ?)
-      WHERE workspace_id = ? AND id = ? AND EXISTS (SELECT 1 FROM system_state WHERE singleton_id = 1 AND mode = ? AND mode_epoch = ? AND maintenance = 0)`).bind(
+      WHERE workspace_id = ? AND id = ? AND EXISTS (SELECT 1 FROM system_state WHERE singleton_id = ${context.scope.id} AND mode = ? AND mode_epoch = ? AND maintenance = 0)`).bind(
       nowMs, context.workspaceId, saleId, activeMode(context), request.modeEpoch,
     ));
     statements.push(assertion(db, context, request.requestId, "sale-handover-confirmed", 1, nowMs));
@@ -329,7 +335,7 @@ async function checkin(db: D1Database, session: SessionContext, context: ActiveC
     db.prepare(`UPDATE tickets SET status = 'USED', used_at_ms = ?, refunded_at_ms = NULL,
       current_use_event_id = (SELECT json_extract(value, '$.eventId') FROM json_each(?) WHERE json_extract(value, '$.ticketId') = tickets.id), version = version + 1
       WHERE workspace_id = ? AND status = 'ISSUED' AND id IN (SELECT json_extract(value, '$.ticketId') FROM json_each(?))
-        AND EXISTS (SELECT 1 FROM system_state WHERE singleton_id = 1 AND mode = ? AND mode_epoch = ? AND maintenance = 0)`).bind(
+        AND EXISTS (SELECT 1 FROM system_state WHERE singleton_id = ${context.scope.id} AND mode = ? AND mode_epoch = ? AND maintenance = 0)`).bind(
       nowMs, mapping, context.workspaceId, mapping, activeMode(context), request.modeEpoch,
     ),
     assertion(db, context, request.requestId, "tickets-checked-in", selected.length, nowMs),
@@ -361,7 +367,7 @@ async function reverseCheckin(db: D1Database, session: SessionContext, context: 
   await db.batch([
     db.prepare(`UPDATE tickets SET status = 'ISSUED', used_at_ms = NULL, current_use_event_id = NULL, version = version + 1
       WHERE workspace_id = ? AND id = ? AND status = 'USED' AND current_use_event_id = ?
-        AND EXISTS (SELECT 1 FROM system_state WHERE singleton_id = 1 AND mode = ? AND mode_epoch = ? AND maintenance = 0)`).bind(
+        AND EXISTS (SELECT 1 FROM system_state WHERE singleton_id = ${context.scope.id} AND mode = ? AND mode_epoch = ? AND maintenance = 0)`).bind(
       context.workspaceId, ticket.id, expected, activeMode(context), request.modeEpoch,
     ),
     assertion(db, context, request.requestId, "ticket-checkin-reversed", 1, nowMs),
@@ -394,7 +400,7 @@ async function refund(db: D1Database, session: SessionContext, context: ActiveCo
   await db.batch([
     db.prepare(`UPDATE tickets SET status = 'REFUNDED', used_at_ms = NULL, current_use_event_id = NULL, refunded_at_ms = ?, version = version + 1
       WHERE workspace_id = ? AND status = 'ISSUED' AND id IN (SELECT json_extract(value, '$.ticketId') FROM json_each(?))
-        AND EXISTS (SELECT 1 FROM system_state WHERE singleton_id = 1 AND mode = ? AND mode_epoch = ? AND maintenance = 0)`).bind(
+        AND EXISTS (SELECT 1 FROM system_state WHERE singleton_id = ${context.scope.id} AND mode = ? AND mode_epoch = ? AND maintenance = 0)`).bind(
       nowMs, context.workspaceId, mapping, activeMode(context), request.modeEpoch,
     ),
     assertion(db, context, request.requestId, "tickets-refunded", selected.length, nowMs),
@@ -438,7 +444,7 @@ async function setMaintenance(db: D1Database, session: SessionContext, context: 
   const value = request.payload.maintenance ? 1 : 0;
   const result = { maintenance: request.payload.maintenance };
   await db.batch([
-    db.prepare("UPDATE system_state SET maintenance = ?, mode_epoch = mode_epoch + 1, updated_at_ms = ? WHERE singleton_id = 1 AND mode = ? AND mode_epoch = ?").bind(
+    db.prepare(`UPDATE system_state SET maintenance = ?, mode_epoch = mode_epoch + 1, updated_at_ms = ? WHERE singleton_id = ${context.scope.id} AND mode = ? AND mode_epoch = ?`).bind(
       value, nowMs, activeMode(context), request.modeEpoch,
     ),
     assertion(db, context, request.requestId, "maintenance-updated", 1, nowMs),
@@ -458,17 +464,16 @@ async function enableDev(db: D1Database, session: SessionContext, context: Activ
   const nextSequence = (await db.prepare("SELECT COALESCE(MAX(sequence), 0) + 1 AS value FROM workspaces WHERE kind = 'DEV'").first<{ value: number }>())?.value || 1;
   const result = { devWorkspaceId: devId, sequence: nextSequence };
   await db.batch([
-    db.prepare(`INSERT INTO workspaces (id, kind, status, sequence, config_revision, config_snapshot_json, ticket_prefix, unit_price_yen, max_ticket_number, max_items_per_operation, max_tendered_yen, checkout_hold_seconds, last_ticket_number, last_group_number, selected_test_day, started_at_ms, ended_at_ms)
-      VALUES (?, 'DEV', 'ACTIVE', ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, 1, ?, NULL)`).bind(
+    db.prepare(`INSERT INTO workspaces (id, kind, status, sequence, config_revision, config_snapshot_json, ticket_prefix, unit_price_yen, max_ticket_number, max_items_per_operation, max_tendered_yen, checkout_hold_seconds, last_ticket_number, last_group_number, selected_test_day, started_at_ms, ended_at_ms, environment)
+      VALUES (?, 'DEV', 'ACTIVE', ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, 1, ?, NULL, ?)`).bind(
       devId, nextSequence, context.configRevision, context.configSnapshotJson, context.ticketPrefix, context.unitPriceYen,
-      context.maxTicketNumber, context.maxItemsPerOperation, context.maxTenderedYen, context.holdSeconds, nowMs,
+      context.maxTicketNumber, context.maxItemsPerOperation, context.maxTenderedYen, context.holdSeconds, nowMs, context.scope.key,
     ),
-    db.prepare("INSERT INTO business_days (workspace_id, day_number, event_date, ticket_limit, sold_count) VALUES (?, 1, NULL, ?, 0), (?, 2, NULL, ?, 0), (?, 3, NULL, ?, 0)").bind(
-      devId, context.maxTicketNumber, devId, context.maxTicketNumber, devId, context.maxTicketNumber,
-    ),
+    db.prepare("INSERT INTO business_days (workspace_id, day_number, event_date, ticket_limit, sold_count) SELECT ?, day_number, event_date, ticket_limit, 0 FROM business_days WHERE workspace_id = ?").bind(devId, context.workspaceId),
+    assertion(db, context, request.requestId, "developer-days-copied", 3, nowMs),
     db.prepare("UPDATE checkouts SET status = 'CANCELLED' WHERE workspace_id = ? AND status = 'HELD'").bind(context.workspaceId),
     db.prepare(`UPDATE system_state SET mode = 'DEVELOPMENT', current_dev_workspace_id = ?, maintenance = 0, mode_epoch = mode_epoch + 1, updated_at_ms = ?
-      WHERE singleton_id = 1 AND mode = 'LIVE' AND mode_epoch = ? AND current_live_workspace_id = ?
+      WHERE singleton_id = ${context.scope.id} AND mode = 'LIVE' AND mode_epoch = ? AND current_live_workspace_id = ?
         AND NOT EXISTS (SELECT 1 FROM sales WHERE workspace_id = ? AND handover_confirmed_at_ms IS NULL)
         AND NOT EXISTS (SELECT 1 FROM refunds WHERE workspace_id = ? AND handover_confirmed_at_ms IS NULL)`).bind(
       devId, nowMs, request.modeEpoch, context.workspaceId, context.workspaceId, context.workspaceId,
@@ -489,7 +494,7 @@ async function setDevDay(db: D1Database, session: SessionContext, context: Activ
     db.prepare(`UPDATE workspaces SET selected_test_day = ? WHERE id = ? AND kind = 'DEV' AND status = 'ACTIVE'
       AND NOT EXISTS (SELECT 1 FROM checkouts WHERE workspace_id = ? AND status = 'HELD' AND expires_at_ms > ?)`).bind(day, context.workspaceId, context.workspaceId, nowMs),
     assertion(db, context, request.requestId, "developer-day-updated", 1, nowMs),
-    db.prepare("UPDATE system_state SET mode_epoch = mode_epoch + 1, updated_at_ms = ? WHERE singleton_id = 1 AND mode = 'DEVELOPMENT' AND mode_epoch = ? AND current_dev_workspace_id = ?").bind(
+    db.prepare(`UPDATE system_state SET mode_epoch = mode_epoch + 1, updated_at_ms = ? WHERE singleton_id = ${context.scope.id} AND mode = 'DEVELOPMENT' AND mode_epoch = ? AND current_dev_workspace_id = ?`).bind(
       nowMs, request.modeEpoch, context.workspaceId,
     ),
     assertion(db, context, request.requestId, "developer-epoch-updated", 1, nowMs),
@@ -505,10 +510,12 @@ async function disableDev(db: D1Database, session: SessionContext, context: Acti
   const liveId = context.liveWorkspaceId;
   const result = { deleted: true };
   await db.batch([
-    db.prepare("UPDATE system_state SET mode = 'LIVE', current_dev_workspace_id = NULL, maintenance = 1, mode_epoch = mode_epoch + 1, updated_at_ms = ? WHERE singleton_id = 1 AND mode = 'DEVELOPMENT' AND mode_epoch = ? AND current_dev_workspace_id = ?").bind(
+    db.prepare(`UPDATE system_state SET mode = 'LIVE', current_dev_workspace_id = NULL, maintenance = 1, mode_epoch = mode_epoch + 1, updated_at_ms = ? WHERE singleton_id = ${context.scope.id} AND mode = 'DEVELOPMENT' AND mode_epoch = ? AND current_dev_workspace_id = ?`).bind(
       nowMs, request.modeEpoch, context.workspaceId,
     ),
     assertion(db, context, request.requestId, "developer-mode-disabled", 1, nowMs),
+    db.prepare(`INSERT INTO purged_operation_receipts (request_id, type, workspace_id, committed_at_ms, purged_at_ms, environment)
+      SELECT request_id, type, workspace_id, committed_at_ms, ?, ? FROM business_operations WHERE workspace_id = ?`).bind(nowMs, context.scope.key, context.workspaceId),
     db.prepare("DELETE FROM workspaces WHERE id = ? AND kind = 'DEV'").bind(context.workspaceId),
     operation(db, liveId, request.requestId, request.action, hash, result, nowMs),
     audit(db, session, null, request.requestId, "DEVELOPER_MODE_DISABLED", "DEV領域とテスト業務データを削除しました。", nowMs),
@@ -523,21 +530,36 @@ async function resetLive(db: D1Database, session: SessionContext, context: Activ
     (SELECT COUNT(*) FROM sales WHERE workspace_id = ? AND handover_confirmed_at_ms IS NULL) +
     (SELECT COUNT(*) FROM refunds WHERE workspace_id = ? AND handover_confirmed_at_ms IS NULL) AS count`).bind(context.workspaceId, context.workspaceId).first<{ count: number }>();
   if ((pending?.count || 0) > 0) throw new ApiError(409, "PENDING_HANDOVER_EXISTS", "受渡未確認の記録があります。");
+  const days = await db.prepare("SELECT day_number, event_date FROM business_days WHERE workspace_id = ? ORDER BY day_number")
+    .bind(context.workspaceId).all<{ day_number: DayNumber; event_date: string | null }>();
+  const sold = await db.prepare("SELECT COUNT(*) AS count FROM sales WHERE workspace_id = ?")
+    .bind(context.workspaceId).first<{ count: number }>();
+  const today = getJstDateString(nowMs);
+  if ((sold?.count || 0) > 0 && (days.results.length !== 3 || days.results.some((day) => !day.event_date) || days.results.some((day) => day.event_date! >= today))) {
+    throw new ApiError(409, "RESET_NOT_ALLOWED", "販売実績があるため、すべての開催日が終了するまで本番リセットできません。");
+  }
   const newId = crypto.randomUUID();
-  const nextSequence = context.sequence + 1;
+  const nextSequence = (await db.prepare("SELECT COALESCE(MAX(sequence), 0) + 1 AS value FROM workspaces WHERE kind = 'LIVE'").first<{ value: number }>())!.value;
   const result = { workspaceId: newId, sequence: nextSequence };
   await db.batch([
-    db.prepare("UPDATE workspaces SET status = 'ARCHIVED', ended_at_ms = ? WHERE id = ? AND kind = 'LIVE' AND status = 'ACTIVE'").bind(nowMs, context.workspaceId),
+    db.prepare(`UPDATE workspaces SET status = 'ARCHIVED', ended_at_ms = ? WHERE id = ? AND kind = 'LIVE' AND status = 'ACTIVE'
+      AND EXISTS (SELECT 1 FROM system_state WHERE singleton_id = ${context.scope.id} AND mode = 'LIVE' AND mode_epoch = ? AND maintenance = 1 AND current_live_workspace_id = workspaces.id)
+      AND NOT EXISTS (SELECT 1 FROM sales WHERE workspace_id = workspaces.id AND handover_confirmed_at_ms IS NULL)
+      AND NOT EXISTS (SELECT 1 FROM refunds WHERE workspace_id = workspaces.id AND handover_confirmed_at_ms IS NULL)
+      AND NOT EXISTS (SELECT 1 FROM checkouts WHERE workspace_id = workspaces.id AND status = 'HELD' AND expires_at_ms > ?)
+      AND (NOT EXISTS (SELECT 1 FROM sales WHERE workspace_id = workspaces.id) OR (
+        (SELECT COUNT(*) FROM business_days WHERE workspace_id = workspaces.id) = 3
+        AND NOT EXISTS (SELECT 1 FROM business_days WHERE workspace_id = workspaces.id AND (event_date IS NULL OR event_date >= ?))
+      ))`).bind(nowMs, context.workspaceId, request.modeEpoch, nowMs, today),
     assertion(db, context, request.requestId, "live-archived", 1, nowMs),
-    db.prepare(`INSERT INTO workspaces (id, kind, status, sequence, config_revision, config_snapshot_json, ticket_prefix, unit_price_yen, max_ticket_number, max_items_per_operation, max_tendered_yen, checkout_hold_seconds, last_ticket_number, last_group_number, selected_test_day, started_at_ms, ended_at_ms)
-      VALUES (?, 'LIVE', 'ACTIVE', ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, 1, ?, NULL)`).bind(
+    db.prepare(`INSERT INTO workspaces (id, kind, status, sequence, config_revision, config_snapshot_json, ticket_prefix, unit_price_yen, max_ticket_number, max_items_per_operation, max_tendered_yen, checkout_hold_seconds, last_ticket_number, last_group_number, selected_test_day, started_at_ms, ended_at_ms, environment)
+      VALUES (?, 'LIVE', 'ACTIVE', ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, 1, ?, NULL, ?)`).bind(
       newId, nextSequence, context.configRevision, context.configSnapshotJson, context.ticketPrefix, context.unitPriceYen,
-      context.maxTicketNumber, context.maxItemsPerOperation, context.maxTenderedYen, context.holdSeconds, nowMs,
+      context.maxTicketNumber, context.maxItemsPerOperation, context.maxTenderedYen, context.holdSeconds, nowMs, context.scope.key,
     ),
-    db.prepare("INSERT INTO business_days (workspace_id, day_number, event_date, ticket_limit, sold_count) VALUES (?, 1, NULL, ?, 0), (?, 2, NULL, ?, 0), (?, 3, NULL, ?, 0)").bind(
-      newId, context.maxTicketNumber, newId, context.maxTicketNumber, newId, context.maxTicketNumber,
-    ),
-    db.prepare("UPDATE system_state SET current_live_workspace_id = ?, mode_epoch = mode_epoch + 1, updated_at_ms = ? WHERE singleton_id = 1 AND mode = 'LIVE' AND mode_epoch = ? AND current_live_workspace_id = ? AND maintenance = 1").bind(
+    db.prepare("INSERT INTO business_days (workspace_id, day_number, event_date, ticket_limit, sold_count) SELECT ?, day_number, event_date, ticket_limit, 0 FROM business_days WHERE workspace_id = ?").bind(newId, context.workspaceId),
+    assertion(db, context, request.requestId, "live-days-copied", 3, nowMs),
+    db.prepare(`UPDATE system_state SET current_live_workspace_id = ?, mode_epoch = mode_epoch + 1, updated_at_ms = ? WHERE singleton_id = ${context.scope.id} AND mode = 'LIVE' AND mode_epoch = ? AND current_live_workspace_id = ? AND maintenance = 1`).bind(
       newId, nowMs, request.modeEpoch, context.workspaceId,
     ),
     assertion(db, context, request.requestId, "live-reset", 1, nowMs),
@@ -563,9 +585,12 @@ async function renameDevice(db: D1Database, session: SessionContext, context: Ac
 export async function mutate(db: D1Database, session: SessionContext, request: MutationRequest): Promise<unknown> {
   ensureRequest(request);
   const hash = await sha256Hex(JSON.stringify({ action: request.action, payload: request.payload }));
-  const previous = await existing(db, request.requestId, hash);
+  const previous = await existing(db, session.scope, request.requestId, hash);
   if (previous !== null) return previous;
-  const context = await activeContext(db);
+  const context = await activeContext(db, session.scope);
+  if (session.scope.key === "preview" && (request.action === "RESET_LIVE_WORKSPACE" || (context.kind !== "DEV" && !["ENABLE_DEVELOPER_MODE", "RENAME_DEVICE"].includes(request.action)))) {
+    throw new ApiError(409, "PREVIEW_DEVELOPMENT_REQUIRED", "Previewでは開発者モードを開始してテストしてください。本番業務は操作できません。");
+  }
   const nowMs = Date.now();
   try {
     switch (request.action) {

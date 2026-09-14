@@ -15,8 +15,9 @@ type AdminScreenProps = {
 export function AdminScreen({ data, mutate, requestConfirmation }: AdminScreenProps) {
   const workspace = getActiveWorkspace(data);
   const [deviceName, setDeviceName] = useState(data.system.device.name);
+  const isPreview = data.system.environment === "preview";
   const isDev = data.system.mode === "DEVELOPMENT";
-  const eventDates = ([1, 2, 3] as const).map((day) => workspace.configSnapshot.EVENT_DATES[day]);
+  const eventDates = ([1, 2, 3] as const).map((day) => workspace.businessDays[day]?.eventDate ?? null);
   const eventDateLabel = eventDates.every((date): date is string => date !== null)
     ? eventDates.map((date) => {
       const [year, month, day] = date.split("-").map(Number);
@@ -43,7 +44,7 @@ export function AdminScreen({ data, mutate, requestConfirmation }: AdminScreenPr
 
   const stopDevelopment = () => {
     confirmAction("テストデータを削除", "現在のDEV領域にあるチケット、販売、入場、返金、現金、履歴を削除します。本番データは保持します。", () => {
-      void mutate("DISABLE_DEVELOPER_MODE", {}, "DEVデータを削除しました。本番の営業停止状態です。");
+      void mutate("DISABLE_DEVELOPER_MODE", {}, isPreview ? "テストデータを削除しました。Previewはテスト停止中です。" : "DEVデータを削除しました。本番の営業停止状態です。");
     });
   };
 
@@ -69,10 +70,10 @@ export function AdminScreen({ data, mutate, requestConfirmation }: AdminScreenPr
     <div className="screen admin-screen">
       <section className="admin-status-grid">
         <article className={isDev ? "admin-status admin-status--dev" : "admin-status admin-status--live"}>
-          <p className="eyebrow">現在の領域</p><h2>{isDev ? "開発者モード" : "本番モード"}</h2><strong>運用回 {workspace.sequence}</strong><p>{isDev ? "終了時にこのテスト業務データを削除します。" : `開催日 ${eventDateLabel}。営業状態を確認して運用してください。`}</p>
+          <p className="eyebrow">現在の領域</p><h2>{isDev ? "開発者モード" : isPreview ? "テスト停止中" : "本番モード"}</h2><strong>運用回 {workspace.sequence}</strong><p>{isDev ? "終了時にこのテスト業務データを削除します。" : `開催日 ${eventDateLabel}。営業状態を確認して運用してください。`}</p>
         </article>
         <article className={`admin-status ${data.system.maintenance ? "admin-status--stopped" : "admin-status--open"}`}>
-          <p className="eyebrow">営業状態</p><h2>{data.system.maintenance ? "営業停止中" : "受付可能"}</h2><p>モード世代 {data.system.modeEpoch}</p><button type="button" className={data.system.maintenance ? "primary-button" : "danger-button"} onClick={toggleMaintenance}>{data.system.maintenance ? "営業を再開" : "営業を停止"}</button>
+          <p className="eyebrow">営業状態</p><h2>{data.system.maintenance ? "営業停止中" : "受付可能"}</h2><p>モード世代 {data.system.modeEpoch}</p><button type="button" className={data.system.maintenance ? "primary-button" : "danger-button"} disabled={isPreview && !isDev} onClick={toggleMaintenance}>{data.system.maintenance ? "営業を再開" : "営業を停止"}</button>
         </article>
       </section>
 
@@ -93,7 +94,7 @@ export function AdminScreen({ data, mutate, requestConfirmation }: AdminScreenPr
           ) : (
             <button type="button" className="danger-card" onClick={stopDevelopment}><strong>開発者モードを終了</strong><span>現在のテスト業務データを削除</span></button>
           )}
-          <button type="button" className="danger-card" onClick={resetLive} disabled={isDev || !data.system.maintenance}><strong>本番運用回をリセット</strong><span>営業停止・開催終了確認が必要</span></button>
+          <button type="button" className="danger-card" onClick={resetLive} disabled={isPreview || isDev || !data.system.maintenance}><strong>本番運用回をリセット</strong><span>営業停止・開催終了確認が必要</span></button>
         </div>
       </section>
 
@@ -116,7 +117,7 @@ export function AdminScreen({ data, mutate, requestConfirmation }: AdminScreenPr
 
       <section className="admin-section">
         <div className="section-heading"><div><p className="eyebrow">認証情報を含めません</p><h2>本番データ出力</h2></div></div>
-        {isDev ? <div className="alert alert--warning">開発者モード中は正式な本番業務出力を無効にしています。</div> : (
+        {isPreview || isDev ? <div className="alert alert--warning">テスト環境では正式な本番業務出力を無効にしています。</div> : (
           <div className="export-grid">
             <button type="button" onClick={() => exportFile("json")}>本番JSON</button>
             <button type="button" onClick={() => exportFile("tickets")}>チケットCSV</button>

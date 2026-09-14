@@ -9,6 +9,13 @@ function response(data: ReturnType<typeof createInitialData>): StateResponse {
 }
 
 describe("ログイン後の初期モード", () => {
+  it("画面とAPIの環境が違えば自動モード変更を送らない", async () => {
+    const data = createInitialData();
+    data.system.environment = "preview";
+    const client = { state: vi.fn().mockResolvedValue(response(data)), mutate: vi.fn() };
+    await expect(loadStartupState(client, true)).rejects.toMatchObject({ code: "ENVIRONMENT_MISMATCH" });
+    expect(client.mutate).not.toHaveBeenCalled();
+  });
   it("設定がtrueならLIVEから開発者モードを自動開始する", async () => {
     const live = createInitialData();
     const development = structuredClone(live);
@@ -33,6 +40,19 @@ describe("ログイン後の初期モード", () => {
     };
 
     const startup = await loadStartupState(client, false);
+
+    expect(client.mutate).not.toHaveBeenCalled();
+    expect(startup.state.data.system.mode).toBe("LIVE");
+  });
+
+  it("ビルド時定義がない実行環境では安全側の既定値でLIVEを変更しない", async () => {
+    const live = createInitialData();
+    const client = {
+      state: vi.fn().mockResolvedValue(response(live)),
+      mutate: vi.fn(),
+    };
+
+    const startup = await loadStartupState(client);
 
     expect(client.mutate).not.toHaveBeenCalled();
     expect(startup.state.data.system.mode).toBe("LIVE");

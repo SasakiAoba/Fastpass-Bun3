@@ -109,6 +109,16 @@ describe("管理画面の開催日", () => {
   });
 });
 
+describe("管理画面の実際の開催日", () => {
+  it("設定スナップショットよりD1の営業日を優先し、未設定を隠さない", () => {
+    const data = createInitialData();
+    data.workspaces[0].businessDays[1].eventDate = null;
+    render(<AdminScreen data={data} mutate={async () => null} requestConfirmation={() => undefined} />);
+    expect(screen.getAllByText(/開催日が未設定です/).length).toBeGreaterThan(0);
+    expect(screen.queryByText("2026年9月18日・2026年9月19日・2026年9月20日")).not.toBeInTheDocument();
+  });
+});
+
 describe("販売直後の入場使用", () => {
   it("販売した全券の受渡しと入場をまとめて確定する", async () => {
     const data = createDevelopmentData();

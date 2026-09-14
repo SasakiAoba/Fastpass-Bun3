@@ -1,11 +1,15 @@
 import { ApiError, assertSameOrigin, constantTimeEqual, isUuid, json, randomToken, readJson, sha256Hex } from "./http";
 
+import { runtimeScope, type RuntimeScope } from "./environment";
+
 export interface Env {
+  FASTPASS_ENVIRONMENT?: string;
   DB: D1Database;
   AUTH_SHARED_PASSWORD?: string;
 }
 
 export type SessionContext = {
+  scope: RuntimeScope;
   id: string;
   deviceId: string;
   deviceName: string;
@@ -62,8 +66,8 @@ export async function readSession(request: Request, env: Env): Promise<SessionCo
        FROM sessions AS s
        JOIN devices AS d ON d.id = s.device_id AND d.disabled_at_ms IS NULL
        JOIN auth_credentials AS a ON a.singleton_id = 1 AND a.auth_generation = s.auth_generation
-      WHERE s.token_hash = ? AND s.revoked_at_ms IS NULL`,
-  ).bind(tokenHash).first<{
+      WHERE s.token_hash = ? AND s.environment = ? AND s.revoked_at_ms IS NULL`,
+  ).bind(tokenHash, runtimeScope(env).key).first<{
     id: string;
     device_id: string;
     csrf_token_hash: string;
@@ -77,6 +81,7 @@ export async function readSession(request: Request, env: Env): Promise<SessionCo
     deviceName: row.display_name,
     csrfTokenHash: row.csrf_token_hash,
     authGeneration: row.auth_generation,
+    scope: runtimeScope(env),
   };
 }
 
@@ -144,11 +149,11 @@ export async function login(request: Request, env: Env): Promise<Response> {
        WHERE devices.disabled_at_ms IS NULL`,
     ).bind(body.deviceId, deviceName, nowMs, nowMs),
     env.DB.prepare(
-      "INSERT INTO sessions (id, token_hash, csrf_token_hash, device_id, auth_generation, issued_at_ms, last_used_at_ms, revoked_at_ms) VALUES (?, ?, ?, ?, ?, ?, ?, NULL)",
-    ).bind(sessionId, await sha256Hex(sessionToken), await sha256Hex(csrfToken), body.deviceId, credential.auth_generation, nowMs, nowMs),
+      "INSERT INTO sessions (id, token_hash, csrf_token_hash, device_id, auth_generation, issued_at_ms, last_used_at_ms, revoked_at_ms, environment) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?)",
+    ).bind(sessionId, await sha256Hex(sessionToken), await sha256Hex(csrfToken), body.deviceId, credential.auth_generation, nowMs, nowMs, runtimeScope(env).key),
     env.DB.prepare(
-      "INSERT INTO audit_logs (id, workspace_id, device_id, session_id, operation_id, type, status, detail, occurred_at_ms) VALUES (?, NULL, ?, ?, NULL, 'LOGIN_SUCCEEDED', 'SUCCESS', '共有パスワードでログインしました。', ?)",
-    ).bind(crypto.randomUUID(), body.deviceId, sessionId, nowMs),
+      "INSERT INTO audit_logs (id, workspace_id, device_id, session_id, operation_id, type, status, detail, occurred_at_ms, environment) VALUES (?, NULL, ?, ?, NULL, 'LOGIN_SUCCEEDED', 'SUCCESS', '共有パスワードでログインしました。', ?, ?)",
+    ).bind(crypto.randomUUID(), body.deviceId, sessionId, nowMs, runtimeScope(env).key),
   ]);
   const headers = new Headers();
   headers.append("Set-Cookie", sessionCookie(sessionToken));
@@ -162,8 +167,8 @@ export async function logout(request: Request, env: Env): Promise<Response> {
   await env.DB.batch([
     env.DB.prepare("UPDATE sessions SET revoked_at_ms = COALESCE(revoked_at_ms, ?), last_used_at_ms = ? WHERE id = ?").bind(nowMs, nowMs, session.id),
     env.DB.prepare(
-      "INSERT INTO audit_logs (id, workspace_id, device_id, session_id, operation_id, type, status, detail, occurred_at_ms) VALUES (?, NULL, ?, ?, NULL, 'LOGOUT', 'SUCCESS', 'ログアウトしました。', ?)",
-    ).bind(crypto.randomUUID(), session.deviceId, session.id, nowMs),
+      "INSERT INTO audit_logs (id, workspace_id, device_id, session_id, operation_id, type, status, detail, occurred_at_ms, environment) VALUES (?, NULL, ?, ?, NULL, 'LOGOUT', 'SUCCESS', 'ログアウトしました。', ?, ?)",
+    ).bind(crypto.randomUUID(), session.deviceId, session.id, nowMs, runtimeScope(env).key),
   ]);
   const headers = new Headers();
   headers.append("Set-Cookie", sessionCookie("", 0));

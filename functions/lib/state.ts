@@ -13,7 +13,7 @@ import type {
 } from "../../src/domain/types";
 import type { StateResponse } from "../../src/shared/api";
 import type { SessionContext } from "./auth";
-import { ApiError } from "./http";
+import { ApiError, sha256Hex } from "./http";
 
 type SystemRow = {
   mode: FastpassData["system"]["mode"];
@@ -49,34 +49,45 @@ function parseConfig(raw: string): FastpassConfig {
   }
 }
 
+// Read the revision before the snapshot. A concurrent write may cause an extra
+// reload, but cannot attach a newer revision to an older snapshot.
+export async function loadStateEtag(db: D1Database, session: SessionContext): Promise<string> {
+  const revision = await db.withSession("first-primary").prepare(`SELECT mode_epoch, updated_at_ms,
+    COALESCE((SELECT MAX(rowid) FROM business_operations WHERE environment = '${session.scope.key}'), 0) AS operation_revision,
+    COALESCE((SELECT MAX(rowid) FROM audit_logs WHERE environment = '${session.scope.key}'), 0) AS audit_revision
+    FROM system_state WHERE singleton_id = ${session.scope.id}`).first();
+  if (!revision) throw new ApiError(503, "SCHEMA_NOT_INITIALIZED", "D1の初期化が完了していません。");
+  return `"${await sha256Hex(JSON.stringify({ revision, environment: session.scope.key, deviceId: session.deviceId, deviceName: session.deviceName }))}"`;
+}
+
 export async function loadState(db: D1Database, session: SessionContext, nowMs = Date.now()): Promise<StateResponse> {
   const database = db.withSession("first-primary");
   const results = await database.batch([
-    database.prepare("SELECT mode, mode_epoch, maintenance, current_live_workspace_id, current_dev_workspace_id FROM system_state WHERE singleton_id = 1"),
-    database.prepare(`SELECT w.* FROM workspaces AS w JOIN system_state AS s ON s.singleton_id = 1
+    database.prepare(`SELECT mode, mode_epoch, maintenance, current_live_workspace_id, current_dev_workspace_id FROM system_state WHERE singleton_id = ${session.scope.id}`),
+    database.prepare(`SELECT w.* FROM workspaces AS w JOIN system_state AS s ON s.singleton_id = ${session.scope.id}
       WHERE w.id = s.current_live_workspace_id OR w.id = s.current_dev_workspace_id ORDER BY w.kind, w.sequence`),
-    database.prepare(`SELECT d.* FROM business_days AS d JOIN system_state AS s ON s.singleton_id = 1
+    database.prepare(`SELECT d.* FROM business_days AS d JOIN system_state AS s ON s.singleton_id = ${session.scope.id}
       WHERE d.workspace_id = s.current_live_workspace_id OR d.workspace_id = s.current_dev_workspace_id ORDER BY d.workspace_id, d.day_number`),
-    database.prepare(`SELECT c.* FROM checkouts AS c JOIN system_state AS s ON s.singleton_id = 1
+    database.prepare(`SELECT c.* FROM checkouts AS c JOIN system_state AS s ON s.singleton_id = ${session.scope.id}
       WHERE c.workspace_id = CASE WHEN s.mode = 'DEVELOPMENT' THEN s.current_dev_workspace_id ELSE s.current_live_workspace_id END`),
-    database.prepare(`SELECT x.* FROM sales AS x JOIN system_state AS s ON s.singleton_id = 1
+    database.prepare(`SELECT x.* FROM sales AS x JOIN system_state AS s ON s.singleton_id = ${session.scope.id}
       WHERE x.workspace_id = CASE WHEN s.mode = 'DEVELOPMENT' THEN s.current_dev_workspace_id ELSE s.current_live_workspace_id END ORDER BY x.purchased_at_ms`),
-    database.prepare(`SELECT t.* FROM tickets AS t JOIN system_state AS s ON s.singleton_id = 1
+    database.prepare(`SELECT t.* FROM tickets AS t JOIN system_state AS s ON s.singleton_id = ${session.scope.id}
       WHERE t.workspace_id = CASE WHEN s.mode = 'DEVELOPMENT' THEN s.current_dev_workspace_id ELSE s.current_live_workspace_id END ORDER BY t.serial_number`),
-    database.prepare(`SELECT e.* FROM ticket_events AS e JOIN system_state AS s ON s.singleton_id = 1
+    database.prepare(`SELECT e.* FROM ticket_events AS e JOIN system_state AS s ON s.singleton_id = ${session.scope.id}
       WHERE e.workspace_id = CASE WHEN s.mode = 'DEVELOPMENT' THEN s.current_dev_workspace_id ELSE s.current_live_workspace_id END ORDER BY e.occurred_at_ms`),
-    database.prepare(`SELECT a.* FROM admissions AS a JOIN system_state AS s ON s.singleton_id = 1
+    database.prepare(`SELECT a.* FROM admissions AS a JOIN system_state AS s ON s.singleton_id = ${session.scope.id}
       WHERE a.workspace_id = CASE WHEN s.mode = 'DEVELOPMENT' THEN s.current_dev_workspace_id ELSE s.current_live_workspace_id END ORDER BY a.occurred_at_ms`),
-    database.prepare(`SELECT i.* FROM admission_items AS i JOIN system_state AS s ON s.singleton_id = 1
+    database.prepare(`SELECT i.* FROM admission_items AS i JOIN system_state AS s ON s.singleton_id = ${session.scope.id}
       WHERE i.workspace_id = CASE WHEN s.mode = 'DEVELOPMENT' THEN s.current_dev_workspace_id ELSE s.current_live_workspace_id END`),
-    database.prepare(`SELECT r.* FROM checkin_reversals AS r JOIN system_state AS s ON s.singleton_id = 1
+    database.prepare(`SELECT r.* FROM checkin_reversals AS r JOIN system_state AS s ON s.singleton_id = ${session.scope.id}
       WHERE r.workspace_id = CASE WHEN s.mode = 'DEVELOPMENT' THEN s.current_dev_workspace_id ELSE s.current_live_workspace_id END ORDER BY r.occurred_at_ms`),
-    database.prepare(`SELECT r.* FROM refunds AS r JOIN system_state AS s ON s.singleton_id = 1
+    database.prepare(`SELECT r.* FROM refunds AS r JOIN system_state AS s ON s.singleton_id = ${session.scope.id}
       WHERE r.workspace_id = CASE WHEN s.mode = 'DEVELOPMENT' THEN s.current_dev_workspace_id ELSE s.current_live_workspace_id END ORDER BY r.occurred_at_ms`),
-    database.prepare(`SELECT i.* FROM refund_items AS i JOIN system_state AS s ON s.singleton_id = 1
+    database.prepare(`SELECT i.* FROM refund_items AS i JOIN system_state AS s ON s.singleton_id = ${session.scope.id}
       WHERE i.workspace_id = CASE WHEN s.mode = 'DEVELOPMENT' THEN s.current_dev_workspace_id ELSE s.current_live_workspace_id END ORDER BY i.refund_id, i.ticket_id`),
-    database.prepare(`SELECT l.* FROM audit_logs AS l JOIN system_state AS s ON s.singleton_id = 1
-      WHERE l.workspace_id IS NULL OR l.workspace_id = CASE WHEN s.mode = 'DEVELOPMENT' THEN s.current_dev_workspace_id ELSE s.current_live_workspace_id END
+    database.prepare(`SELECT l.* FROM audit_logs AS l JOIN system_state AS s ON s.singleton_id = ${session.scope.id}
+      WHERE l.environment = '${session.scope.key}' AND (l.workspace_id IS NULL OR l.workspace_id = CASE WHEN s.mode = 'DEVELOPMENT' THEN s.current_dev_workspace_id ELSE s.current_live_workspace_id END)
       ORDER BY l.occurred_at_ms DESC LIMIT 500`),
   ]);
 
@@ -179,6 +190,7 @@ export async function loadState(db: D1Database, session: SessionContext, nowMs =
     schemaVersion: 1,
     savedAtMs: nowMs,
     system: {
+      environment: session.scope.key,
       mode: system.mode,
       modeEpoch: system.mode_epoch,
       maintenance: system.maintenance === 1,

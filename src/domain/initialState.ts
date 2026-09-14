@@ -62,6 +62,7 @@ export function createInitialData(nowMs = Date.now()): FastpassData {
     schemaVersion: 1,
     savedAtMs: nowMs,
     system: {
+      environment: "production",
       mode: "LIVE",
       modeEpoch: 1,
       maintenance: true,

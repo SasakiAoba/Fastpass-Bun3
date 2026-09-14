@@ -1,8 +1,9 @@
 import type { MutationRequest } from "../../src/shared/api";
 import { authStatus, login, logout, requireSession, type Env } from "../lib/auth";
 import { ApiError, errorResponse, isUuid, json, readJson } from "../lib/http";
+import { runtimeScope } from "../lib/environment";
 import { mutate } from "../lib/mutations";
-import { loadState } from "../lib/state";
+import { loadState, loadStateEtag } from "../lib/state";
 
 function pathParts(context: EventContext<Env, string, Record<string, unknown>>): string[] {
   const raw = context.params.path;
@@ -21,6 +22,7 @@ function csv(headers: string[], records: unknown[][]): string {
 
 async function exportResponse(request: Request, env: Env, kind: string): Promise<Response> {
   const session = await requireSession(request, env);
+  if (session.scope.key === "preview") throw new ApiError(409, "PREVIEW_EXPORT_DISABLED", "本番データの出力はProductionから行ってください。");
   const { data } = await loadState(env.DB, session);
   const workspaceId = data.system.mode === "DEVELOPMENT" ? data.system.devWorkspaceId : data.system.liveWorkspaceId;
   if (!workspaceId) throw new ApiError(500, "INVALID_SYSTEM_STATE", "出力対象を確認できません。");
@@ -94,16 +96,25 @@ export const onRequest: PagesFunction<Env> = async (context) => {
   let requestId: string | undefined;
   try {
     if (!context.env.DB) throw new ApiError(503, "DB_BINDING_MISSING", "D1 Binding「DB」が設定されていません。");
+    const scope = runtimeScope(context.env);
+    const expectedEnvironment = request.headers.get("X-Fastpass-Environment");
+    if ((expectedEnvironment && expectedEnvironment !== scope.key) || (method === "POST" && parts[0] === "mutations" && expectedEnvironment !== scope.key)) throw new ApiError(503, "ENVIRONMENT_MISMATCH", "画面とAPIの環境設定が一致しません。");
     if (method === "GET" && parts.length === 1 && parts[0] === "health") {
       const migration = await context.env.DB.prepare("SELECT MAX(version) AS version FROM schema_migrations").first<{ version: number | null }>();
-      return json({ ok: true, schemaVersion: migration?.version || 0, serverNowMs: Date.now() });
+      return json({ ok: true, environment: scope.key, schemaVersion: migration?.version || 0, serverNowMs: Date.now() });
     }
     if (method === "GET" && parts.join("/") === "auth/status") return await authStatus(request, context.env);
     if (method === "POST" && parts.join("/") === "auth/login") return await login(request, context.env);
     if (method === "POST" && parts.join("/") === "auth/logout") return await logout(request, context.env);
     if (method === "GET" && parts.length === 1 && parts[0] === "state") {
       const session = await requireSession(request, context.env);
-      return json(await loadState(context.env.DB, session));
+      const etag = await loadStateEtag(context.env.DB, session);
+      if (request.headers.get("If-None-Match") === etag) {
+        return new Response(null, { status: 304, headers: {
+          "ETag": etag, "Cache-Control": "no-store", "X-Server-Now-Ms": String(Date.now()),
+        } });
+      }
+      return json(await loadState(context.env.DB, session), 200, { "ETag": etag });
     }
     if (method === "POST" && parts.length === 1 && parts[0] === "mutations") {
       const session = await requireSession(request, context.env, true);
@@ -116,7 +127,11 @@ export const onRequest: PagesFunction<Env> = async (context) => {
     if (method === "GET" && parts.length === 2 && parts[0] === "operations") {
       await requireSession(request, context.env);
       if (!isUuid(parts[1])) throw new ApiError(400, "INVALID_REQUEST_ID", "操作IDを確認できません。");
-      const found = await context.env.DB.prepare("SELECT request_id, type, result_json, committed_at_ms FROM business_operations WHERE request_id = ? ORDER BY committed_at_ms DESC LIMIT 1").bind(parts[1]).first<{ request_id: string; type: string; result_json: string; committed_at_ms: number }>();
+      const found = await context.env.DB.prepare("SELECT o.request_id, o.type, o.result_json, o.committed_at_ms FROM business_operations o JOIN workspaces w ON w.id = o.workspace_id WHERE o.request_id = ? AND w.environment = ? ORDER BY o.committed_at_ms DESC LIMIT 1").bind(parts[1], scope.key).first<{ request_id: string; type: string; result_json: string; committed_at_ms: number }>();
+      if (!found) {
+        const purged = await context.env.DB.prepare("SELECT request_id, type, committed_at_ms FROM purged_operation_receipts WHERE request_id = ? AND environment = ?").bind(parts[1], scope.key).first<{ request_id: string; type: string; committed_at_ms: number }>();
+        if (purged) return json({ found: true, operation: { requestId: purged.request_id, type: purged.type, result: null, committedAtMs: purged.committed_at_ms, purged: true } });
+      }
       return json({ found: found !== null, operation: found ? { requestId: found.request_id, type: found.type, result: JSON.parse(found.result_json), committedAtMs: found.committed_at_ms } : null });
     }
     if (method === "GET" && parts.length === 2 && parts[0] === "exports") return await exportResponse(request, context.env, parts[1]);
